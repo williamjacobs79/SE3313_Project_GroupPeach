@@ -15,7 +15,7 @@ signInButton.addEventListener("click", () => {
   modal.style.display = "flex";
 });
 
-// Close Modal
+// Close Modal - test
 closeModalButton.addEventListener("click", () => {
   modal.style.display = "none";
 });

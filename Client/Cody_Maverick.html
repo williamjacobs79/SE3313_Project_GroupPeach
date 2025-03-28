@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cody Maverick</title>
+    <link rel="stylesheet" href="Cody_Maverick.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <h1 class="site-name">Cody Maverick</h1>
+        </div>
+        <div class="header-middle" id="user-display">
+            <!-- User will appear here after login -->
+        </div>
+        <div class="header-right">
+            <button class="header-button" id="surf-locations-btn">Surf Locations</button>
+            <button class="header-button">My Profile</button>
+            <button class="header-button" id="sign-in">Sign In</button>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="main-content">
+        
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <span>About Us</span>
+        <span>Contact Us</span>
+        <span>Your Information</span>
+    </footer>
+
+    <!-- Modal -->
+    <div class="modal" id="auth-modal">
+        <div class="modal-content">
+            <span class="close-btn" id="close-modal">&times;</span>
+            <div id="login-form">
+                <h2>Sign In</h2>
+                <input type="text" id="username" placeholder="Username" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <button id="login-btn">Login</button>
+                <p>
+                    Don't have an account? 
+                    <button id="create-account-btn" class="link-btn">Create Account</button>
+                </p>
+            </div>
+            <div id="create-account-form" style="display: none;">
+                <h2>Create Account</h2>
+                <label for="new-username">Username:</label>
+                <input type="text" id="new-username" required />
+            
+                <label for="new-password">Password:</label>
+                <input type="password" id="new-password" required />
+            
+                <label for="new-email">Email:</label> <!-- Add this -->
+                <input type="email" id="new-email" required /> <!-- Email input -->
+                <button id="create-btn">Create Account</button>
+                <p>
+                    Already have an account? 
+                    <button id="back-to-login-btn" class="link-btn">Back to Login</button>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script src="Cody_Maverick.js"></script>
+</body>
+</html>

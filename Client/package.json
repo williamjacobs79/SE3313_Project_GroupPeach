@@ -1,0 +1,8 @@
+{
+  "name": "surf-locations-client",
+  "version": "1.0.0",
+  "description": "Client for Surf Locations application",
+  "scripts": {
+    "start": "python3 -m http.server 8000"
+  }
+} 

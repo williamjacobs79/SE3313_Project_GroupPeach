@@ -87,6 +87,26 @@ int main()
     mongocxx::client client{mongocxx::uri{mongo_uri}};
     auto db = client[db_name];
 
+    // Check if collections exist and create them if they don't
+    try {
+        // List all collections
+        auto collections = db.list_collection_names();
+        std::vector<std::string> existing_collections(collections.begin(), collections.end());
+
+        // Collections we need
+        std::vector<std::string> required_collections = {"SurfLocation", "Post", "Likes", "Comments"};
+
+        // Create missing collections
+        for (const auto& collection_name : required_collections) {
+            if (std::find(existing_collections.begin(), existing_collections.end(), collection_name) == existing_collections.end()) {
+                db.create_collection(collection_name);
+                std::cout << "Created collection: " << collection_name << std::endl;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error setting up collections: " << e.what() << std::endl;
+    }
+
     // Set up Crow HTTP server.
     crow::SimpleApp app;
 
@@ -122,6 +142,90 @@ int main()
         {
             std::string response_str = R"({"status": "error", "message": "Failed to insert mock entry."})";
             return crow::response(500, response_str);
+        }
+    });
+
+    // Endpoint for surf locations with filtering
+    CROW_ROUTE(app, "/api/surf-locations")
+    .methods("GET"_method)
+    ([&db](const crow::request& req) {
+        try {
+            // Simple find query without any filters or projection
+            auto collection = db["SurfLocation"];
+            auto cursor = collection.find({});
+
+            // Convert results to JSON
+            std::vector<bsoncxx::document::value> results;
+            for (auto&& doc : cursor) {
+                results.push_back(bsoncxx::document::value(doc));
+            }
+
+            // Convert to JSON string
+            std::string json_result = "[";
+            for (size_t i = 0; i < results.size(); ++i) {
+                json_result += bsoncxx::to_json(results[i]);
+                if (i < results.size() - 1) {
+                    json_result += ",";
+                }
+            }
+            json_result += "]";
+
+            return crow::response(json_result);
+        } catch (const std::exception& e) {
+            std::string error_msg = std::string("Error: ") + e.what();
+            return crow::response(500, error_msg);
+        }
+    });
+
+    // Endpoint to show database structure
+    CROW_ROUTE(app, "/api/db-structure")
+    .methods("GET"_method)
+    ([&db](const crow::request& req) {
+        try {
+            std::string result = "{\n";
+            result += "  \"collections\": [\n";
+
+            // Get all collections
+            auto collections = db.list_collection_names();
+            bool first_collection = true;
+
+            for (const auto& collection_name : collections) {
+                if (!first_collection) {
+                    result += ",\n";
+                }
+                first_collection = false;
+
+                result += "    {\n";
+                result += "      \"name\": \"" + collection_name + "\",\n";
+                result += "      \"documents\": [\n";
+
+                // Get sample document from collection
+                auto collection = db[collection_name];
+                auto cursor = collection.find({});
+                bool first_doc = true;
+
+                for (auto&& doc : cursor) {
+                    if (!first_doc) {
+                        result += ",\n";
+                    }
+                    first_doc = false;
+                    
+                    // Convert document to JSON with all fields
+                    std::string doc_json = bsoncxx::to_json(doc);
+                    result += "        " + doc_json;
+                }
+
+                result += "\n      ]\n";
+                result += "    }";
+            }
+
+            result += "\n  ]\n";
+            result += "}";
+
+            return crow::response(result);
+        } catch (const std::exception& e) {
+            std::string error_msg = std::string("Error: ") + e.what();
+            return crow::response(500, error_msg);
         }
     });
 

@@ -79,9 +79,9 @@ int main()
     }
     std::string db_name(db_name_env);
 
-    // Retrieve port, default to 3001 if not set.
+    // Retrieve port, default to 3000 if not set.
     const char* port_env = std::getenv("PORT");
-    int port = port_env ? std::stoi(port_env) : 3001;
+    int port = port_env ? std::stoi(port_env) : 3000;
 
     // Create a client connection to MongoDB Atlas.
     mongocxx::client client{mongocxx::uri{mongo_uri}};

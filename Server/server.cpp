@@ -12,6 +12,7 @@
 #include <iostream>   // For std::cerr, std::cout
 #include <string>     // For std::string
 #include <chrono>     // For std::chrono::system_clock
+#include <algorithm>  // For std::transform
 
 // Simple function to load .env file variables into environment variables.
 void loadDotEnv(const std::string& path)
@@ -87,11 +88,19 @@ int main()
     mongocxx::client client{mongocxx::uri{mongo_uri}};
     auto db = client[db_name];
 
+    // Print connection info
+    std::cout << "Connected to database: " << db_name << std::endl;
+    std::cout << "Using URI: " << mongo_uri << std::endl;
+
     // Check if collections exist and create them if they don't
     try {
         // List all collections
         auto collections = db.list_collection_names();
         std::vector<std::string> existing_collections(collections.begin(), collections.end());
+        std::cout << "Existing collections: " << std::endl;
+        for (const auto& name : existing_collections) {
+            std::cout << "  - " << name << std::endl;
+        }
 
         // Collections we need
         std::vector<std::string> required_collections = {"SurfLocation", "Post", "Likes", "Comments"};
@@ -103,6 +112,47 @@ int main()
                 std::cout << "Created collection: " << collection_name << std::endl;
             }
         }
+
+        // Insert a test document into SurfLocation collection
+        auto surf_location = db["SurfLocation"];
+        
+        // First, clear existing data
+        auto delete_result = surf_location.delete_many({});
+        std::cout << "Deleted " << delete_result->deleted_count() << " documents" << std::endl;
+        
+        // Create and insert test document
+        bsoncxx::builder::stream::document test_doc{};
+        test_doc << "locationName" << "Tofino"
+                 << "breakType" << "Beach Break"
+                 << "surfScore" << 7
+                 << "countryName" << "Canada"
+                 << "userId" << "test_user"
+                 << "description" << "Famous surf spot in British Columbia"
+                 << "coordinates" << bsoncxx::builder::stream::open_document
+                 << "latitude" << 49.1538
+                 << "longitude" << -125.9074
+                 << bsoncxx::builder::stream::close_document;
+        
+        auto doc_value = test_doc << bsoncxx::builder::stream::finalize;
+        
+        // Print the document before insertion
+        std::cout << "Attempting to insert document: " << bsoncxx::to_json(doc_value) << std::endl;
+        
+        // Insert the document using the view
+        auto result = surf_location.insert_one(doc_value.view());
+        if (result) {
+            std::cout << "Successfully inserted test document" << std::endl;
+        } else {
+            std::cout << "Failed to insert test document" << std::endl;
+        }
+
+        // Print current contents of SurfLocation collection
+        std::cout << "\nCurrent contents of SurfLocation collection:" << std::endl;
+        auto cursor = surf_location.find({});
+        for (auto&& doc : cursor) {
+            std::cout << bsoncxx::to_json(doc) << std::endl;
+        }
+
     } catch (const std::exception& e) {
         std::cerr << "Error setting up collections: " << e.what() << std::endl;
     }
@@ -116,48 +166,67 @@ int main()
         return "C++ backend server is up and running!";
     });
 
-    // New route for testing MongoDB connectivity with a mock table entry.
-    CROW_ROUTE(app, "/api/mock")([&db](){
-        // Access the "mockTable" collection.
-        auto collection = db["mockTable"];
-
-        // Build a mock document using the BSON stream builder.
-        using bsoncxx::builder::stream::document;
-        using bsoncxx::builder::stream::finalize;
-        document doc{};
-        doc << "name" << "Test Entry"
-            << "value" << 123
-            << "description" << "This is a mock table entry for testing connectivity"
-            << "timestamp" << bsoncxx::types::b_date{std::chrono::system_clock::now()}
-            << finalize;
-
-        // Insert the document into the collection.
-        auto result = collection.insert_one(doc.view());
-        if(result)
-        {
-            std::string response_str = R"({"status": "success", "message": "Mock entry inserted."})";
-            return crow::response(200, response_str);
-        }
-        else
-        {
-            std::string response_str = R"({"status": "error", "message": "Failed to insert mock entry."})";
-            return crow::response(500, response_str);
-        }
-    });
-
     // Endpoint for surf locations with filtering
     CROW_ROUTE(app, "/api/surf-locations")
     .methods("GET"_method)
     ([&db](const crow::request& req) {
         try {
-            // Simple find query without any filters or projection
-            auto collection = db["SurfLocation"];
-            auto cursor = collection.find({});
+            // Get query parameters
+            auto country = req.url_params.get("country");
+            auto location = req.url_params.get("location");
+            
+            std::cout << "Received request with country: " << (country ? country : "none") 
+                      << ", location: " << (location ? location : "none") << std::endl;
 
-            // Convert results to JSON
+            // Build query document
+            bsoncxx::builder::stream::document query{};
+            bool has_valid_query = false;
+
+            // Handle country parameter
+            if (country) {
+                std::string country_str(country);
+                if (!country_str.empty()) {
+                    query << "countryName" << bsoncxx::types::b_regex{country_str, "i"};
+                    has_valid_query = true;
+                    std::cout << "Added country filter: " << country_str << std::endl;
+                }
+            }
+
+            // Handle location parameter
+            if (location) {
+                std::string location_str(location);
+                if (!location_str.empty()) {
+                    query << "locationName" << bsoncxx::types::b_regex{location_str, "i"};
+                    has_valid_query = true;
+                    std::cout << "Added location filter: " << location_str << std::endl;
+                }
+            }
+
+            // Finalize the query document
+            auto query_value = query << bsoncxx::builder::stream::finalize;
+            std::cout << "Final query: " << bsoncxx::to_json(query_value) << std::endl;
+
+            // Find documents
+            auto collection = db["SurfLocation"];
             std::vector<bsoncxx::document::value> results;
+
+            // Always perform query, but use empty query if no criteria provided
+            auto cursor = collection.find(query_value.view());
             for (auto&& doc : cursor) {
                 results.push_back(bsoncxx::document::value(doc));
+                std::cout << "Found document: " << bsoncxx::to_json(doc) << std::endl;
+            }
+
+            // Print the locations being sent
+            std::cout << "\nSending locations:" << std::endl;
+            for (const auto& doc : results) {
+                auto view = doc.view();
+                std::cout << "Location: " << view["locationName"].get_string().value.to_string() 
+                          << ", Country: " << view["countryName"].get_string().value.to_string() 
+                          << ", Break Type: " << view["breakType"].get_string().value.to_string() 
+                          << ", Surf Score: " << view["surfScore"].get_int32().value 
+                          << ", Total Likes: " << view["TotalLikes"].get_int32().value 
+                          << ", Total Comments: " << view["TotalComments"].get_int32().value << std::endl;
             }
 
             // Convert to JSON string
@@ -170,9 +239,18 @@ int main()
             }
             json_result += "]";
 
-            return crow::response(json_result);
+            std::cout << "Returning results: " << json_result << std::endl;
+            
+            // Create response with explicit status code and headers
+            crow::response res;
+            res.body = json_result;
+            res.code = 200;
+            res.add_header("Content-Type", "application/json");
+            res.add_header("Access-Control-Allow-Origin", "*");
+            return res;
         } catch (const std::exception& e) {
             std::string error_msg = std::string("Error: ") + e.what();
+            std::cerr << error_msg << std::endl;
             return crow::response(500, error_msg);
         }
     });

@@ -10,6 +10,11 @@ const loginButton = document.getElementById("login-btn");
 const createButton = document.getElementById("create-btn");
 const userDisplay = document.getElementById("user-display");
 
+// Load surf locations when the page first loads
+document.addEventListener('DOMContentLoaded', () => {
+    loadSurfLocations();
+});
+
 // Show Modal
 signInButton.addEventListener("click", () => {
   modal.style.display = "flex";
@@ -42,7 +47,11 @@ loginButton.addEventListener("click", async () => {
   try {
     const response = await fetch("http://localhost:3000/api/login", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      mode: 'cors',
+      headers: { 
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
       body: JSON.stringify({ username, password }),
     });
 
@@ -75,7 +84,11 @@ createButton.addEventListener("click", async () => {
   try {
     const response = await fetch("http://localhost:3000/api/create-account", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      mode: 'cors',
+      headers: { 
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
       body: JSON.stringify({
         username: newUsername,
         password: newPassword,
@@ -133,15 +146,30 @@ async function fetchAndDisplayLocations(
   filterLikes = false
 ) {
   try {
+    console.log('Fetching locations with:', { country, location });
     const response = await fetch(
-      `http://localhost:3000/api/surf-locations?country=${country}&location=${location}&filterLikes=${filterLikes}`
+      `http://localhost:3000/api/surf-locations?country=${country}&location=${location}&filterLikes=${filterLikes}`,
+      {
+        method: 'GET',
+        mode: 'cors',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      }
     );
     const locations = await response.json();
+    console.log('Received locations:', locations);
 
     const tilesContainer = document.getElementById("surf-locations");
+    if (!tilesContainer) {
+      console.error('Could not find surf-locations container');
+      return;
+    }
+
     tilesContainer.innerHTML = ""; // Clear existing tiles
 
-    if (locations.length === 0) {
+    if (!locations || locations.length === 0) {
       tilesContainer.innerHTML = `<p>No surf locations found.</p>`;
       return;
     }
@@ -151,11 +179,11 @@ async function fetchAndDisplayLocations(
       const tile = document.createElement("div");
       tile.classList.add("tile");
       tile.innerHTML = `
-                <h3>${loc.locationName}</h3>
-                <p>Break Type: ${loc.breakType}</p>
-                <p>Surf Score: ${loc.surfScore}</p>
-                <p>Country: ${loc.countryName}</p>
-                <p>Added by User ID: ${loc.userId}</p>
+                <h3>${loc.locationName || 'Unnamed Location'}</h3>
+                <p>Break Type: ${loc.breakType || 'Not specified'}</p>
+                <p>Surf Score: ${loc.surfScore || 'Not rated'}</p>
+                <p>Country: ${loc.countryName || 'Not specified'}</p>
+                <p>Added by User ID: ${loc.userId || 'Unknown'}</p>
                 <p>Likes: ${loc.TotalLikes || 0}</p>
                 <p>Comments: ${loc.TotalComments || 0}</p>
             `;
@@ -166,6 +194,10 @@ async function fetchAndDisplayLocations(
     });
   } catch (error) {
     console.error("Error fetching surf locations:", error);
+    const tilesContainer = document.getElementById("surf-locations");
+    if (tilesContainer) {
+      tilesContainer.innerHTML = `<p>Error loading surf locations. Please try again.</p>`;
+    }
   }
 }
 

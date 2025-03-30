@@ -56,6 +56,8 @@ void loadDotEnv(const std::string& path)
     file.close();
 }
 
+
+
 int main()
 {
     // Add semaphore for search operations (allow 3 concurrent searches)
@@ -117,51 +119,11 @@ int main()
             }
         }
 
-        // Insert a test document into SurfLocation collection
-        auto surf_location = db["SurfLocation"];
-        
-        // First, clear existing data
-        auto delete_result = surf_location.delete_many({});
-        std::cout << "Deleted " << delete_result->deleted_count() << " documents" << std::endl;
-        
-        // Create and insert test document
-        bsoncxx::builder::stream::document test_doc{};
-        test_doc << "locationName" << "Tofino"
-                 << "breakType" << "Beach Break"
-                 << "surfScore" << 7
-                 << "countryName" << "Canada"
-                 << "userId" << "test_user"
-                 << "description" << "Famous surf spot in British Columbia"
-                 << "TotalLikes" << 0
-                 << "TotalComments" << 0
-                 << "coordinates" << bsoncxx::builder::stream::open_document
-                 << "latitude" << 49.1538
-                 << "longitude" << -125.9074
-                 << bsoncxx::builder::stream::close_document;
-        
-        auto doc_value = test_doc << bsoncxx::builder::stream::finalize;
-        
-        // Print the document before insertion
-        std::cout << "Attempting to insert document: " << bsoncxx::to_json(doc_value) << std::endl;
-        
-        // Insert the document using the view
-        auto result = surf_location.insert_one(doc_value.view());
-        if (result) {
-            std::cout << "Successfully inserted test document" << std::endl;
-        } else {
-            std::cout << "Failed to insert test document" << std::endl;
-        }
-
-        // Print current contents of SurfLocation collection
-        std::cout << "\nCurrent contents of SurfLocation collection:" << std::endl;
-        auto cursor = surf_location.find({});
-        for (auto&& doc : cursor) {
-            std::cout << bsoncxx::to_json(doc) << std::endl;
-        }
-
     } catch (const std::exception& e) {
         std::cerr << "Error setting up collections: " << e.what() << std::endl;
     }
+
+
 
     // Set up Crow HTTP server.
     crow::SimpleApp app;

@@ -50,8 +50,10 @@ loginButton.addEventListener("click", async () => {
       mode: 'cors',
       headers: { 
         "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Origin": "http://localhost:8000"
       },
+      credentials: 'omit',
       body: JSON.stringify({ username, password }),
     });
 
@@ -87,8 +89,10 @@ createButton.addEventListener("click", async () => {
       mode: 'cors',
       headers: { 
         "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Origin": "http://localhost:8000"
       },
+      credentials: 'omit',
       body: JSON.stringify({
         username: newUsername,
         password: newPassword,
@@ -151,13 +155,12 @@ async function fetchAndDisplayLocations(
       `http://localhost:3000/api/surf-locations?country=${country}&location=${location}&filterLikes=${filterLikes}`,
       {
         method: 'GET',
-        mode: 'cors',
         headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
+          'Accept': 'application/json'
         }
       }
     );
+    
     const locations = await response.json();
     console.log('Received locations:', locations);
 

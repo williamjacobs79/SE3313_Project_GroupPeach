@@ -5,6 +5,7 @@
 #include <mongocxx/uri.hpp>      // For MongoDB URI
 #include <bsoncxx/builder/stream/document.hpp>  // For building BSON documents
 #include <bsoncxx/types.hpp>     // For BSON types
+#include <semaphore>             // For semaphore
 
 #include <fstream>    // For file I/O
 #include <sstream>    // For string streams
@@ -57,6 +58,9 @@ void loadDotEnv(const std::string& path)
 
 int main()
 {
+    // Add semaphore for search operations (allow 3 concurrent searches)
+    std::counting_semaphore<3> search_semaphore(3);
+    
     // Load environment variables from .env
     loadDotEnv(".env");
     
@@ -162,47 +166,43 @@ int main()
     // Set up Crow HTTP server.
     crow::SimpleApp app;
 
-    // Add CORS headers to all responses
-    app.after_handle([](crow::response& res) {
-        res.add_header("Access-Control-Allow-Origin", "http://localhost:8000");
+    // Global OPTIONS handler for CORS preflight requests
+    CROW_ROUTE(app, "/<path>").methods("OPTIONS"_method)([](const crow::request&, const std::string& path) {
+        auto res = crow::response(204);
+        res.add_header("Access-Control-Allow-Origin", "*");
         res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-        res.add_header("Access-Control-Allow-Credentials", "true");
+        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+        return res;
     });
 
-    // Handle preflight requests globally
-    app.handle_OPTIONS([](const crow::request& req) {
-        auto response = crow::response();
-        response.add_header("Access-Control-Allow-Origin", "http://localhost:8000");
-        response.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        response.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-        response.add_header("Access-Control-Allow-Credentials", "true");
-        response.code = 204;
-        return response;
+    // Root OPTIONS handler
+    CROW_ROUTE(app, "/").methods("OPTIONS"_method)([]() {
+        auto res = crow::response(204);
+        res.add_header("Access-Control-Allow-Origin", "*");
+        res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+        return res;
     });
 
     // Route to test server connectivity.
     CROW_ROUTE(app, "/")
     ([](){
-        return "C++ backend server is up and running!";
+        auto res = crow::response("C++ backend server is up and running!");
+        res.add_header("Access-Control-Allow-Origin", "*");
+        res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+        return res;
     });
 
     // Endpoint for surf locations with filtering
     CROW_ROUTE(app, "/api/surf-locations")
-    .methods("GET"_method, "OPTIONS"_method)
-    ([&db](const crow::request& req) {
-        // Handle preflight request
-        if (req.method == "OPTIONS"_method) {
-            auto response = crow::response();
-            response.add_header("Access-Control-Allow-Origin", "http://localhost:8000");
-            response.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-            response.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-            response.add_header("Access-Control-Allow-Credentials", "true");
-            response.code = 204;
-            return response;
-        }
-
+    .methods("GET"_method)
+    ([&db, &search_semaphore](const crow::request& req) {
         try {
+            // Acquire semaphore
+            search_semaphore.acquire();
+            std::cout << "Search semaphore acquired" << std::endl;
+
             // Get query parameters
             auto country = req.url_params.get("country");
             auto location = req.url_params.get("location");
@@ -249,40 +249,49 @@ int main()
                 std::cout << "Found document: " << bsoncxx::to_json(doc) << std::endl;
             }
 
-            // Print the locations being sent
-            std::cout << "\nSending locations:" << std::endl;
-            for (const auto& doc : results) {
-                auto view = doc.view();
-                std::cout << "Location: " << view["locationName"].get_string().value.to_string() 
-                          << ", Country: " << view["countryName"].get_string().value.to_string() 
-                          << ", Break Type: " << view["breakType"].get_string().value.to_string() 
-                          << ", Surf Score: " << view["surfScore"].get_int32().value 
-                          << ", Total Likes: " << (view["TotalLikes"] ? view["TotalLikes"].get_int32().value : 0)
-                          << ", Total Comments: " << (view["TotalComments"] ? view["TotalComments"].get_int32().value : 0) << std::endl;
-            }
-
-            // Convert to JSON string
-            std::string json_result = "[";
-            for (size_t i = 0; i < results.size(); ++i) {
-                json_result += bsoncxx::to_json(results[i]);
-                if (i < results.size() - 1) {
-                    json_result += ",";
+            // Convert to JSON string with proper formatting
+            std::string json_result;
+            if (results.empty()) {
+                json_result = "[]";  // Return empty array if no results
+            } else {
+                json_result = "[";
+                for (size_t i = 0; i < results.size(); ++i) {
+                    json_result += bsoncxx::to_json(results[i]);
+                    if (i < results.size() - 1) {
+                        json_result += ",";
+                    }
                 }
+                json_result += "]";
             }
-            json_result += "]";
 
-            std::cout << "Returning results: " << json_result << std::endl;
-            
-            // Create response with explicit status code and headers
-            crow::response res;
-            res.body = json_result;
+            std::cout << "Returning JSON: " << json_result << std::endl;
+
+            // Release semaphore before returning
+            search_semaphore.release();
+            std::cout << "Search semaphore released" << std::endl;
+
+            // Create response with proper JSON headers
+            auto res = crow::response(json_result);
             res.code = 200;
             res.add_header("Content-Type", "application/json");
+            res.add_header("Access-Control-Allow-Origin", "*");
+            res.add_header("Access-Control-Allow-Methods", "GET, OPTIONS");
+            res.add_header("Access-Control-Allow-Headers", "Content-Type");
             return res;
+
         } catch (const std::exception& e) {
-            std::string error_msg = std::string("Error: ") + e.what();
+            // Make sure to release semaphore even if an error occurs
+            search_semaphore.release();
+            std::cout << "Search semaphore released (after error)" << std::endl;
+
+            std::string error_msg = "{\"error\": \"" + std::string(e.what()) + "\"}";
             std::cerr << error_msg << std::endl;
-            return crow::response(500, error_msg);
+            auto res = crow::response(500, error_msg);
+            res.add_header("Content-Type", "application/json");
+            res.add_header("Access-Control-Allow-Origin", "*");
+            res.add_header("Access-Control-Allow-Methods", "GET, OPTIONS");
+            res.add_header("Access-Control-Allow-Headers", "Content-Type");
+            return res;
         }
     });
 

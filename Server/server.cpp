@@ -128,6 +128,8 @@ int main()
                  << "countryName" << "Canada"
                  << "userId" << "test_user"
                  << "description" << "Famous surf spot in British Columbia"
+                 << "TotalLikes" << 0
+                 << "TotalComments" << 0
                  << "coordinates" << bsoncxx::builder::stream::open_document
                  << "latitude" << 49.1538
                  << "longitude" << -125.9074
@@ -160,6 +162,25 @@ int main()
     // Set up Crow HTTP server.
     crow::SimpleApp app;
 
+    // Add CORS headers to all responses
+    app.after_handle([](crow::response& res) {
+        res.add_header("Access-Control-Allow-Origin", "http://localhost:8000");
+        res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.add_header("Access-Control-Allow-Credentials", "true");
+    });
+
+    // Handle preflight requests globally
+    app.handle_OPTIONS([](const crow::request& req) {
+        auto response = crow::response();
+        response.add_header("Access-Control-Allow-Origin", "http://localhost:8000");
+        response.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        response.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        response.add_header("Access-Control-Allow-Credentials", "true");
+        response.code = 204;
+        return response;
+    });
+
     // Route to test server connectivity.
     CROW_ROUTE(app, "/")
     ([](){
@@ -168,8 +189,19 @@ int main()
 
     // Endpoint for surf locations with filtering
     CROW_ROUTE(app, "/api/surf-locations")
-    .methods("GET"_method)
+    .methods("GET"_method, "OPTIONS"_method)
     ([&db](const crow::request& req) {
+        // Handle preflight request
+        if (req.method == "OPTIONS"_method) {
+            auto response = crow::response();
+            response.add_header("Access-Control-Allow-Origin", "http://localhost:8000");
+            response.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            response.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            response.add_header("Access-Control-Allow-Credentials", "true");
+            response.code = 204;
+            return response;
+        }
+
         try {
             // Get query parameters
             auto country = req.url_params.get("country");
@@ -225,8 +257,8 @@ int main()
                           << ", Country: " << view["countryName"].get_string().value.to_string() 
                           << ", Break Type: " << view["breakType"].get_string().value.to_string() 
                           << ", Surf Score: " << view["surfScore"].get_int32().value 
-                          << ", Total Likes: " << view["TotalLikes"].get_int32().value 
-                          << ", Total Comments: " << view["TotalComments"].get_int32().value << std::endl;
+                          << ", Total Likes: " << (view["TotalLikes"] ? view["TotalLikes"].get_int32().value : 0)
+                          << ", Total Comments: " << (view["TotalComments"] ? view["TotalComments"].get_int32().value : 0) << std::endl;
             }
 
             // Convert to JSON string
@@ -246,7 +278,6 @@ int main()
             res.body = json_result;
             res.code = 200;
             res.add_header("Content-Type", "application/json");
-            res.add_header("Access-Control-Allow-Origin", "*");
             return res;
         } catch (const std::exception& e) {
             std::string error_msg = std::string("Error: ") + e.what();

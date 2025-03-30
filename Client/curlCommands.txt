@@ -1,0 +1,14 @@
+# Search by country
+curl "http://localhost:3000/api/surf-locations?country=Canada"
+
+# Search by location
+curl "http://localhost:3000/api/surf-locations?location=Tofino"
+
+# Search by both country and location
+curl "http://localhost:3000/api/surf-locations?country=Canada&location=Tofino"
+
+# Search locations
+curl http://localhost:3000/api/surf-locations
+
+See DB structure
+curl http://localhost:3000/api/db-structure

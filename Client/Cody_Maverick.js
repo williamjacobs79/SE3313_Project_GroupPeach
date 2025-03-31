@@ -39,81 +39,67 @@ backToLoginButton.addEventListener("click", () => {
 
 //note: we understand that hard-coding localhost:3000 is not good practice in industry
 
-//login button event listener
+// Login event listener – calls the backend /api/login route
 loginButton.addEventListener("click", async () => {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
 
   try {
-    const response = await fetch("http://localhost:3000/api/login", {
-      method: "POST",
-      mode: 'cors',
-      headers: { 
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Origin": "http://localhost:8000"
-      },
-      credentials: 'omit',
-      body: JSON.stringify({ username, password }),
-    });
-
-    const result = await response.json();
-
-    if (result.success) {
-      userDisplay.innerText = `Welcome, ${username}`;
-      modal.style.display = "none";
-
-      // Store logged-in user information, including userId in browser storage
-      localStorage.setItem(
-        "loggedInUser",
-        JSON.stringify({ userId: result.userId, username })
-      );
-    } else {
-      alert(result.message || "Login failed. Please try again.");
-    }
+      const response = await fetch("http://localhost:3000/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+      });
+      const result = await response.json();
+      if (result.success) {
+          userDisplay.innerText = `Welcome, ${result.username}`;
+          modal.style.display = "none";
+          // Store token and user info in local storage
+          localStorage.setItem("loggedInUser", JSON.stringify({
+              token: result.token,
+              userId: result.userId,
+              username: result.username
+          }));
+      } else {
+          alert(result.message || "Login failed. Please try again.");
+      }
   } catch (error) {
-    console.error("Error during login:", error);
-    alert("An error occurred during login.");
+      console.error("Error during login:", error);
+      alert("An error occurred during login.");
   }
 });
 
-//create new user event listener
+// Create account event listener – calls the backend /api/create-account route
 createButton.addEventListener("click", async () => {
   const newUsername = document.getElementById("new-username").value;
   const newPassword = document.getElementById("new-password").value;
   const newEmail = document.getElementById("new-email").value;
 
   try {
-    const response = await fetch("http://localhost:3000/api/create-account", {
-      method: "POST",
-      mode: 'cors',
-      headers: { 
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Origin": "http://localhost:8000"
-      },
-      credentials: 'omit',
-      body: JSON.stringify({
-        username: newUsername,
-        password: newPassword,
-        email: newEmail,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (result.success) {
-      alert("Account created successfully. You can now log in.");
-      createAccountForm.style.display = "none";
-      loginForm.style.display = "block";
-    } else {
-      alert(`Failed to create account: ${result.error || "Unknown error"}`);
-    }
+      const response = await fetch("http://localhost:3000/api/create-account", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+              username: newUsername,
+              password: newPassword,
+              email: newEmail
+          })
+      });
+      const result = await response.json();
+      // Depending on your backend, you might get a JSON or a plain text response
+      if (result.success || result === "Account created successfully") {
+          alert("Account created successfully. You can now log in.");
+          createAccountForm.style.display = "none";
+          loginForm.style.display = "block";
+      } else {
+          alert(`Failed to create account: ${result.message || "Unknown error"}`);
+      }
   } catch (error) {
-    console.error("Error creating account:", error);
-    alert("An error occurred while creating the account.");
+      console.error("Error creating account:", error);
+      alert("An error occurred while creating the account.");
   }
 });
+
 
 // Event listener for the "Surf Locations" button
 document.getElementById("surf-locations-btn").addEventListener("click", () => {

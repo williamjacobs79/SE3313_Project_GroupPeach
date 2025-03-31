@@ -1,316 +1,186 @@
-#include "crow_all.h"            // Crow framework header
-#include <bsoncxx/json.hpp>      // For BSON/JSON conversion
-#include <mongocxx/client.hpp>   // MongoDB C++ driver client
-#include <mongocxx/instance.hpp> // MongoDB C++ driver instance
-#include <mongocxx/uri.hpp>      // For MongoDB URI
-#include <bsoncxx/builder/stream/document.hpp>  // For building BSON documents
-#include <bsoncxx/types.hpp>     // For BSON types
-#include <semaphore>             // For semaphore
+#include "crow_all.h"
+#include <bsoncxx/json.hpp>
+#include <mongocxx/client.hpp>
+#include <mongocxx/instance.hpp>
+#include <mongocxx/uri.hpp>
+#include <jwt-cpp/jwt.h>
+#include <chrono>
+#include <cstdlib>
+#include <string>
+#include <iostream>
 
-#include <fstream>    // For file I/O
-#include <sstream>    // For string streams
-#include <cstdlib>    // For std::getenv, setenv
-#include <iostream>   // For std::cerr, std::cout
-#include <string>     // For std::string
-#include <chrono>     // For std::chrono::system_clock
-#include <algorithm>  // For std::transform
+// Secret key for JWT signing (in production, load this securely from an environment variable)
+const std::string jwt_secret = "your_jwt_secret_key_here";
 
-// Simple function to load .env file variables into environment variables.
-void loadDotEnv(const std::string& path)
-{
-    std::ifstream file(path);
-    if (!file.is_open())
-    {
-        std::cerr << "Warning: Could not open .env file at " << path << std::endl;
-        return;
-    }
-    
-    std::string line;
-    while (std::getline(file, line))
-    {
-        // Trim whitespace at beginning and end (basic trimming)
-        size_t start = line.find_first_not_of(" \t");
-        if (start == std::string::npos) continue;
-        size_t end = line.find_last_not_of(" \t");
-        line = line.substr(start, end - start + 1);
-        
-        // Skip comments and empty lines
-        if (line[0] == '#' || line.empty()) continue;
-        
-        // Split the line at the first '=' character
-        size_t delim_pos = line.find('=');
-        if (delim_pos == std::string::npos) continue;
-        
-        std::string key = line.substr(0, delim_pos);
-        std::string value = line.substr(delim_pos + 1);
-        
-        // Remove any surrounding quotes from value (if any)
-        if (!value.empty() && value.front() == '"' && value.back() == '"')
-        {
-            value = value.substr(1, value.size() - 2);
-        }
-        
-        // Set the environment variable (overwrite if exists)
-        setenv(key.c_str(), value.c_str(), 1);
-    }
-    file.close();
+// Utility: Generate a JWT token for a given user
+std::string generate_jwt(const std::string& user_id, const std::string& username) {
+    auto token = jwt::create()
+        .set_issuer("EddieAikau")
+        .set_type("JWS")
+        .set_subject(user_id)
+        .set_audience("EddieAikauApp")
+        .set_payload_claim("username", jwt::claim(username))
+        .set_expires_at(std::chrono::system_clock::now() + std::chrono::hours(24))
+        .sign(jwt::algorithm::hs256{jwt_secret});
+    return token;
 }
 
+// Utility: Verify a JWT token and extract user_id and username
+bool verify_jwt(const std::string& token, std::string& user_id, std::string& username) {
+    try {
+        auto decoded = jwt::decode(token);
+        auto verifier = jwt::verify()
+                        .allow_algorithm(jwt::algorithm::hs256{jwt_secret})
+                        .with_issuer("EddieAikau");
+        verifier.verify(decoded);
+        user_id = decoded.get_subject();
+        username = decoded.get_payload_claim("username").as_string();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "JWT verification error: " << e.what() << std::endl;
+        return false;
+    }
+}
 
+// JWT middleware for Crow; this middleware protects any route with "/api/protected"
+struct JWTMiddleware {
+    struct context {};
 
-int main()
-{
-    // Add semaphore for search operations (allow 3 concurrent searches)
-    std::counting_semaphore<3> search_semaphore(3);
-    
-    // Load environment variables from .env
-    loadDotEnv(".env");
-    
-    // Initialize MongoDB driver instance (only needed once per application)
+    void before_handle(crow::request& req, crow::response& res, context& ctx) {
+        // Only check for JWT if the URL contains "/api/protected"
+        if (req.url.find("/api/protected") != std::string::npos) {
+            auto auth_header = req.get_header_value("Authorization");
+            if (auth_header.empty() || auth_header.find("Bearer ") != 0) {
+                res.code = 401;
+                res.write("Unauthorized: Missing or invalid token");
+                res.end();
+                return;
+            }
+            std::string token = auth_header.substr(7); // Remove "Bearer " prefix
+            std::string user_id, username;
+            if (!verify_jwt(token, user_id, username)) {
+                res.code = 401;
+                res.write("Unauthorized: Token verification failed");
+                res.end();
+                return;
+            }
+            // Optionally, you can store user_id and username in the request context for later use.
+        }
+    }
+    void after_handle(crow::request& req, crow::response& res, context& ctx) {
+        // No post-processing required for now.
+    }
+};
+
+int main() {
+    // Initialize MongoDB driver instance (only once per application)
     mongocxx::instance instance{};
 
-    // Retrieve MongoDB connection info from environment variables.
+    // Retrieve MongoDB URI from environment variable or default to localhost
     const char* mongo_uri_env = std::getenv("MONGO_URI");
-    if (!mongo_uri_env)
-    {
-        std::cerr << "Error: MONGO_URI environment variable not set." << std::endl;
-        return 1;
-    }
-    std::string mongo_uri(mongo_uri_env);
+    std::string mongo_uri = mongo_uri_env ? mongo_uri_env : "mongodb://localhost:27017";
 
-    const char* db_name_env = std::getenv("DATABASE");
-    if (!db_name_env)
-    {
-        std::cerr << "Error: DATABASE environment variable not set." << std::endl;
-        return 1;
-    }
-    std::string db_name(db_name_env);
-
-    // Retrieve port, default to 3000 if not set.
-    const char* port_env = std::getenv("PORT");
-    int port = port_env ? std::stoi(port_env) : 3000;
-
-    // Create a client connection to MongoDB Atlas.
     mongocxx::client client{mongocxx::uri{mongo_uri}};
-    auto db = client[db_name];
+    auto db = client["EddieAikauDB"];
 
-    // Print connection info
-    std::cout << "Connected to database: " << db_name << std::endl;
-    std::cout << "Using URI: " << mongo_uri << std::endl;
+    // The "Accounts" collection will store user account details.
+    auto accounts_collection = db["Accounts"];
 
-    // Check if collections exist and create them if they don't
-    try {
-        // List all collections
-        auto collections = db.list_collection_names();
-        std::vector<std::string> existing_collections(collections.begin(), collections.end());
-        std::cout << "Existing collections: " << std::endl;
-        for (const auto& name : existing_collections) {
-            std::cout << "  - " << name << std::endl;
+    // Create the Crow app with JWT middleware
+    crow::App<JWTMiddleware> app;
+
+    // Route: Create Account (POST /api/create-account)
+    CROW_ROUTE(app, "/api/create-account").methods("POST"_method)
+    ([&accounts_collection](const crow::request& req){
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return crow::response(400, "Invalid JSON");
+        }
+        std::string username = body["username"].s();
+        std::string password = body["password"].s();
+        std::string email = body["email"].s();
+
+        if(username.empty() || password.empty() || email.empty()) {
+            return crow::response(400, "username, password, and email are required");
         }
 
-        // Collections we need
-        std::vector<std::string> required_collections = {"SurfLocation", "Post", "Likes", "Comments"};
-
-        // Create missing collections
-        for (const auto& collection_name : required_collections) {
-            if (std::find(existing_collections.begin(), existing_collections.end(), collection_name) == existing_collections.end()) {
-                db.create_collection(collection_name);
-                std::cout << "Created collection: " << collection_name << std::endl;
-            }
+        // Check if an account with the same username already exists
+        auto filter = bsoncxx::builder::stream::document{} << "username" << username << bsoncxx::builder::stream::finalize;
+        auto existing = accounts_collection.find_one(filter.view());
+        if(existing) {
+            return crow::response(409, "Account already exists");
         }
 
-    } catch (const std::exception& e) {
-        std::cerr << "Error setting up collections: " << e.what() << std::endl;
-    }
-
-
-
-    // Set up Crow HTTP server.
-    crow::SimpleApp app;
-
-    // Global OPTIONS handler for CORS preflight requests
-    CROW_ROUTE(app, "/<path>").methods("OPTIONS"_method)([](const crow::request&, const std::string& path) {
-        auto res = crow::response(204);
-        res.add_header("Access-Control-Allow-Origin", "*");
-        res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
-        return res;
-    });
-
-    // Root OPTIONS handler
-    CROW_ROUTE(app, "/").methods("OPTIONS"_method)([]() {
-        auto res = crow::response(204);
-        res.add_header("Access-Control-Allow-Origin", "*");
-        res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
-        return res;
-    });
-
-    // Route to test server connectivity.
-    CROW_ROUTE(app, "/")
-    ([](){
-        auto res = crow::response("C++ backend server is up and running!");
-        res.add_header("Access-Control-Allow-Origin", "*");
-        res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
-        return res;
-    });
-
-    // Endpoint for surf locations with filtering
-    CROW_ROUTE(app, "/api/surf-locations")
-    .methods("GET"_method)
-    ([&db, &search_semaphore](const crow::request& req) {
-        try {
-            // Acquire semaphore
-            search_semaphore.acquire();
-            std::cout << "Search semaphore acquired" << std::endl;
-
-            // Get query parameters
-            auto country = req.url_params.get("country");
-            auto location = req.url_params.get("location");
-            
-            std::cout << "Received request with country: " << (country ? country : "none") 
-                      << ", location: " << (location ? location : "none") << std::endl;
-
-            // Build query document
-            bsoncxx::builder::stream::document query{};
-            bool has_valid_query = false;
-
-            // Handle country parameter
-            if (country) {
-                std::string country_str(country);
-                if (!country_str.empty()) {
-                    query << "countryName" << bsoncxx::types::b_regex{country_str, "i"};
-                    has_valid_query = true;
-                    std::cout << "Added country filter: " << country_str << std::endl;
-                }
-            }
-
-            // Handle location parameter
-            if (location) {
-                std::string location_str(location);
-                if (!location_str.empty()) {
-                    query << "locationName" << bsoncxx::types::b_regex{location_str, "i"};
-                    has_valid_query = true;
-                    std::cout << "Added location filter: " << location_str << std::endl;
-                }
-            }
-
-            // Finalize the query document
-            auto query_value = query << bsoncxx::builder::stream::finalize;
-            std::cout << "Final query: " << bsoncxx::to_json(query_value) << std::endl;
-
-            // Find documents
-            auto collection = db["SurfLocation"];
-            std::vector<bsoncxx::document::value> results;
-
-            // Always perform query, but use empty query if no criteria provided
-            auto cursor = collection.find(query_value.view());
-            for (auto&& doc : cursor) {
-                results.push_back(bsoncxx::document::value(doc));
-                std::cout << "Found document: " << bsoncxx::to_json(doc) << std::endl;
-            }
-
-            // Convert to JSON string with proper formatting
-            std::string json_result;
-            if (results.empty()) {
-                json_result = "[]";  // Return empty array if no results
-            } else {
-                json_result = "[";
-                for (size_t i = 0; i < results.size(); ++i) {
-                    json_result += bsoncxx::to_json(results[i]);
-                    if (i < results.size() - 1) {
-                        json_result += ",";
-                    }
-                }
-                json_result += "]";
-            }
-
-            std::cout << "Returning JSON: " << json_result << std::endl;
-
-            // Release semaphore before returning
-            search_semaphore.release();
-            std::cout << "Search semaphore released" << std::endl;
-
-            // Create response with proper JSON headers
-            auto res = crow::response(json_result);
-            res.code = 200;
-            res.add_header("Content-Type", "application/json");
-            res.add_header("Access-Control-Allow-Origin", "*");
-            res.add_header("Access-Control-Allow-Methods", "GET, OPTIONS");
-            res.add_header("Access-Control-Allow-Headers", "Content-Type");
-            return res;
-
-        } catch (const std::exception& e) {
-            // Make sure to release semaphore even if an error occurs
-            search_semaphore.release();
-            std::cout << "Search semaphore released (after error)" << std::endl;
-
-            std::string error_msg = "{\"error\": \"" + std::string(e.what()) + "\"}";
-            std::cerr << error_msg << std::endl;
-            auto res = crow::response(500, error_msg);
-            res.add_header("Content-Type", "application/json");
-            res.add_header("Access-Control-Allow-Origin", "*");
-            res.add_header("Access-Control-Allow-Methods", "GET, OPTIONS");
-            res.add_header("Access-Control-Allow-Headers", "Content-Type");
-            return res;
+        // NOTE: In a production system, hash the password before storing it.
+        auto insert_result = accounts_collection.insert_one(
+            bsoncxx::builder::stream::document{} 
+                << "username" << username 
+                << "password" << password 
+                << "email" << email 
+                << bsoncxx::builder::stream::finalize
+        );
+        if(!insert_result) {
+            return crow::response(500, "Failed to create account");
         }
+        return crow::response(200, "Account created successfully");
     });
 
-    // Endpoint to show database structure
-    CROW_ROUTE(app, "/api/db-structure")
-    .methods("GET"_method)
-    ([&db](const crow::request& req) {
-        try {
-            std::string result = "{\n";
-            result += "  \"collections\": [\n";
-
-            // Get all collections
-            auto collections = db.list_collection_names();
-            bool first_collection = true;
-
-            for (const auto& collection_name : collections) {
-                if (!first_collection) {
-                    result += ",\n";
-                }
-                first_collection = false;
-
-                result += "    {\n";
-                result += "      \"name\": \"" + collection_name + "\",\n";
-                result += "      \"documents\": [\n";
-
-                // Get sample document from collection
-                auto collection = db[collection_name];
-                auto cursor = collection.find({});
-                bool first_doc = true;
-
-                for (auto&& doc : cursor) {
-                    if (!first_doc) {
-                        result += ",\n";
-                    }
-                    first_doc = false;
-                    
-                    // Convert document to JSON with all fields
-                    std::string doc_json = bsoncxx::to_json(doc);
-                    result += "        " + doc_json;
-                }
-
-                result += "\n      ]\n";
-                result += "    }";
-            }
-
-            result += "\n  ]\n";
-            result += "}";
-
-            return crow::response(result);
-        } catch (const std::exception& e) {
-            std::string error_msg = std::string("Error: ") + e.what();
-            return crow::response(500, error_msg);
+    #include <mutex>
+    #include <unordered_map>
+    
+    // Global in-memory session store (for demonstration only)
+    std::mutex session_mutex;
+    std::unordered_map<std::string, int> active_sessions;
+    
+    CROW_ROUTE(app, "/api/login").methods("POST"_method)
+    ([&accounts_collection](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return crow::response(400, "Invalid JSON");
         }
+        std::string username = body["username"].s();
+        std::string password = body["password"].s();
+        
+        if(username.empty() || password.empty()) {
+            return crow::response(400, "Username and password are required");
+        }
+        
+        // Query the database for the account
+        auto filter = bsoncxx::builder::stream::document{} 
+                        << "username" << username 
+                        << "password" << password 
+                        << bsoncxx::builder::stream::finalize;
+        auto result = accounts_collection.find_one(filter.view());
+        if(!result) {
+            return crow::response(401, "Invalid username or password");
+        }
+        auto view = result->view();
+        std::string user_id = view["_id"].get_oid().value.to_string();
+    
+        // Synchronize access to active_sessions
+        {
+            std::lock_guard<std::mutex> lock(session_mutex);
+            int current_sessions = active_sessions[username]; // Defaults to 0 if key doesn't exist
+            if (current_sessions >= 2) {
+                return crow::response(403, "Maximum concurrent sessions reached for this account");
+            }
+            active_sessions[username] = current_sessions + 1;
+        }
+        
+        // Generate a JWT token for the user
+        std::string token = generate_jwt(user_id, username);
+        
+        crow::json::wvalue res_json;
+        res_json["success"] = true;
+        res_json["token"] = token;
+        res_json["userId"] = user_id;
+        res_json["username"] = username;
+        return crow::response(res_json);
     });
 
-    // Run the server on the specified port.
-    app.port(port).multithreaded().run();
-
+   
+    // Start the server on port 3000 (adjust as needed)
+    app.port(3000).multithreaded().run();
     return 0;
 }
+

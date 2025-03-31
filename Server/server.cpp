@@ -1,5 +1,6 @@
 #include "crow_all.h"
 #include <bsoncxx/json.hpp>
+#include <bsoncxx/builder/stream/document.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/instance.hpp>
 #include <mongocxx/uri.hpp>
@@ -8,6 +9,8 @@
 #include <cstdlib>
 #include <string>
 #include <iostream>
+#include <mutex>
+#include <unordered_map>
 
 // Secret key for JWT signing (in production, load this securely from an environment variable)
 const std::string jwt_secret = "your_jwt_secret_key_here";
@@ -86,6 +89,10 @@ int main() {
     // The "Accounts" collection will store user account details.
     auto accounts_collection = db["Accounts"];
 
+    // Global in-memory session store (for demonstration only)
+    std::mutex session_mutex;
+    std::unordered_map<std::string, int> active_sessions;
+    
     // Create the Crow app with JWT middleware
     crow::App<JWTMiddleware> app;
 
@@ -105,7 +112,9 @@ int main() {
         }
 
         // Check if an account with the same username already exists
-        auto filter = bsoncxx::builder::stream::document{} << "username" << username << bsoncxx::builder::stream::finalize;
+        auto filter = bsoncxx::builder::stream::document{}
+                        << "username" << username
+                        << bsoncxx::builder::stream::finalize;
         auto existing = accounts_collection.find_one(filter.view());
         if(existing) {
             return crow::response(409, "Account already exists");
@@ -113,10 +122,10 @@ int main() {
 
         // NOTE: In a production system, hash the password before storing it.
         auto insert_result = accounts_collection.insert_one(
-            bsoncxx::builder::stream::document{} 
-                << "username" << username 
-                << "password" << password 
-                << "email" << email 
+            bsoncxx::builder::stream::document{}
+                << "username" << username
+                << "password" << password
+                << "email" << email
                 << bsoncxx::builder::stream::finalize
         );
         if(!insert_result) {
@@ -125,15 +134,9 @@ int main() {
         return crow::response(200, "Account created successfully");
     });
 
-    #include <mutex>
-    #include <unordered_map>
-    
-    // Global in-memory session store (for demonstration only)
-    std::mutex session_mutex;
-    std::unordered_map<std::string, int> active_sessions;
-    
+    // Route: Login (POST /api/login)
     CROW_ROUTE(app, "/api/login").methods("POST"_method)
-    ([&accounts_collection](const crow::request& req) {
+    ([&accounts_collection, &session_mutex, &active_sessions](const crow::request& req) {
         auto body = crow::json::load(req.body);
         if (!body) {
             return crow::response(400, "Invalid JSON");
@@ -146,9 +149,9 @@ int main() {
         }
         
         // Query the database for the account
-        auto filter = bsoncxx::builder::stream::document{} 
-                        << "username" << username 
-                        << "password" << password 
+        auto filter = bsoncxx::builder::stream::document{}
+                        << "username" << username
+                        << "password" << password
                         << bsoncxx::builder::stream::finalize;
         auto result = accounts_collection.find_one(filter.view());
         if(!result) {
@@ -178,9 +181,7 @@ int main() {
         return crow::response(res_json);
     });
 
-   
     // Start the server on port 3000 (adjust as needed)
     app.port(3000).multithreaded().run();
     return 0;
 }
-

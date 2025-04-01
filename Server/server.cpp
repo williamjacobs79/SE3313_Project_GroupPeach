@@ -33,6 +33,8 @@ Group 1: Account Endpoints
   1.2 - Login
       POST "/api/login"
       Validates credentials and returns user details with a JWT token.
+      Deadlock Handling: Uses a std::timed_mutex with a timeout to avoid lock acquisition stalling indefinitely.
+
 
 Group 2: Surf Location Endpoints
   2.1 - Insert Surf Location
@@ -41,14 +43,18 @@ Group 2: Surf Location Endpoints
   2.2 - Surf Locations (Summaries)
       GET "/api/surf-locations"
       Retrieves surf location summaries with optional country and location filters.
+      Uses semahpore
+
   2.3 - Location Details (Granular & Posts)
       GET "/api/location-details"
       Retrieves detailed information for a location along with its associated posts.
+      Uses semahpore
 
 Group 3: Post Endpoints
   3.1 - Create Post
       POST "/api/create-post"
       Inserts a new post document with initial like and comment counts set to zero.
+      Explicit Thread Scheduling: Uses std::async(std::launch::async, ...) to schedule the database insertion on a separate thread.
 
 Group 4: Comment Endpoints
   4.1 - Create Comment
@@ -57,6 +63,10 @@ Group 4: Comment Endpoints
   4.2 - Get Post Comments
       GET "/api/post-comments"
       Retrieves all comments (with like counts) for a given post.
+      Explicit Thread Scheduling: Also uses std::async to retrieve and process comments in a separate thread.
+
+
+
   4.3 - Like Comment
       POST "/api/like-comment"
       Increments the like count for a comment.
@@ -212,7 +222,7 @@ int main() {
 
     auto accounts_collection = db["Accounts"];
     std::counting_semaphore<3> search_semaphore(3);
-    std::mutex session_mutex;
+    std::timed_mutex session_mutex;
     std::unordered_map<std::string, int> active_sessions;
 
     crow::App<CORSMiddleware, JWTMiddleware> app;
@@ -298,7 +308,9 @@ int main() {
         return crow::response(200, response_json);
     });
 
-    // ----- Endpoint 1.2: Login -----
+    // ----- Endpoint 1.2: Login (with deadlock handling) -----
+    //Deadlock Handling: Uses a std::timed_mutex with a timeout to avoid lock acquisition stalling indefinitely.
+
     CROW_ROUTE(app, "/api/login").methods("POST"_method)
     ([&accounts_collection, &session_mutex, &active_sessions](const crow::request& req) {
         auto body = crow::json::load(req.body);
@@ -327,16 +339,25 @@ int main() {
         }
         auto view = result->view();
         std::string user_id = view["_id"].get_oid().value.to_string();
-        {
-            std::lock_guard<std::mutex> lock(session_mutex);
-            int current_sessions = active_sessions[username];
-            if (current_sessions >= 2) {
-                response_json["success"] = false;
-                response_json["message"] = "Maximum concurrent sessions reached for this account";
-                return crow::response(403, response_json);
-            }
-            active_sessions[username] = current_sessions + 1;
+
+        // Attempt to acquire the timed_mutex with a timeout (e.g., 1000 ms)
+        std::unique_lock<std::timed_mutex> lock(session_mutex, std::chrono::milliseconds(1000));
+        if (!lock.owns_lock()) {
+            response_json["success"] = false;
+            response_json["message"] = "Server busy. Please try again later.";
+            return crow::response(503, response_json);
         }
+        
+        // Critical section: update active_sessions safely
+        int current_sessions = active_sessions[username];
+        if (current_sessions >= 2) {
+            response_json["success"] = false;
+            response_json["message"] = "Maximum concurrent sessions reached for this account";
+            return crow::response(403, response_json);
+        }
+        active_sessions[username] = current_sessions + 1;
+        // The lock will be automatically released when it goes out of scope.
+
         std::string token = generate_jwt(user_id, username);
         response_json["success"] = true;
         response_json["token"] = token;
@@ -344,6 +365,8 @@ int main() {
         response_json["username"] = username;
         return crow::response(200, response_json);
     });
+
+
 
     // =========================================================================
     // Group 2: Surf Location Endpoints
@@ -377,10 +400,11 @@ int main() {
     });
 
     // ----- Endpoint 2.2: Get Surf Locations (Summaries) -----
+    //Uses semaphore
     CROW_ROUTE(app, "/api/surf-locations").methods("GET"_method)
     ([&db, &search_semaphore](const crow::request& req) {
         try {
-            search_semaphore.acquire();
+            search_semaphoreacquire();
             std::cout << "Search semaphore acquired\n";
 
             auto country = req.url_params.get("country");
@@ -438,6 +462,7 @@ int main() {
     });
 
     // ----- Endpoint 2.3: Get Location Details (Location Info & Posts) -----
+    //Uses semaphore
     CROW_ROUTE(app, "/api/location-details").methods("GET"_method)
     ([&db, &search_semaphore](const crow::request& req) {
         try {
@@ -508,6 +533,7 @@ int main() {
     // =========================================================================
 
     // ----- Endpoint 3.1: Create Post -----
+    //Explicit Threading/Multithreading Scheduling: Uses std::async(std::launch::async, ...) to schedule the database insertion on a separate thread.
     CROW_ROUTE(app, "/api/create-post").methods("POST"_method)
     ([&db](const crow::request& req) {
         auto body = crow::json::load(req.body);
@@ -576,6 +602,7 @@ int main() {
     });
 
     // ----- Endpoint 4.2: Get Post Comments -----
+    //Explicit Multi/Thread Scheduling: Also uses std::async to retrieve and process comments in a separate thread.
     CROW_ROUTE(app, "/api/post-comments").methods("GET"_method)
     ([&db](const crow::request& req) {
         auto postId = req.url_params.get("postId");

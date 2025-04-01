@@ -15,6 +15,54 @@
 #include <vector>
 #include <fstream>
 
+/*
+Legend:
+
+Group 0: Connectivity and Database Info Endpoints
+  0.1 - Connectivity Test
+      GET "/" 
+      Returns a simple message confirming the backend server is running.
+  0.2 - Database Structure
+      GET "/api/db-structure" 
+      Returns the list of collection names in the database.
+
+Group 1: Account Endpoints
+  1.1 - Create Account
+      POST "/api/create-account"
+      Validates input, checks for existing account, and inserts a new account.
+  1.2 - Login
+      POST "/api/login"
+      Validates credentials and returns user details with a JWT token.
+
+Group 2: Surf Location Endpoints
+  2.1 - Insert Surf Location
+      POST "/api/insert-surf-location"
+      Inserts a new surf location document into the database.
+  2.2 - Surf Locations (Summaries)
+      GET "/api/surf-locations"
+      Retrieves surf location summaries with optional country and location filters.
+  2.3 - Location Details (Granular & Posts)
+      GET "/api/location-details"
+      Retrieves detailed information for a location along with its associated posts.
+
+Group 3: Post Endpoints
+  3.1 - Create Post
+      POST "/api/create-post"
+      Inserts a new post document with initial like and comment counts set to zero.
+
+Group 4: Comment Endpoints
+  4.1 - Create Comment
+      POST "/api/create-comment"
+      Inserts a new comment for a post.
+  4.2 - Get Post Comments
+      GET "/api/post-comments"
+      Retrieves all comments (with like counts) for a given post.
+  4.3 - Like Comment
+      POST "/api/like-comment"
+      Increments the like count for a comment.
+*/
+
+
 // -----------------------------------------------------------------------------
 // loadDotEnv: Loads environment variables from a .env file into the process
 // -----------------------------------------------------------------------------
@@ -65,27 +113,20 @@ struct CORSMiddleware {
             res.code = 200;
             res.add_header("Access-Control-Allow-Origin", "*");
             res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-
-            // Important: include "Origin" in allowed headers if you manually set it in any fetch calls.
-            res.add_header("Access-Control-Allow-Headers",
-                           "Content-Type, Authorization, Accept, Origin");
-
+            // Include "Origin" if any fetch call sets it manually.
+            res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin");
             res.end();
             return;
         }
     }
 
     void after_handle(crow::request& req, crow::response& res, context& ctx) {
-        // Ensure that all responses (including non-OPTIONS) have the CORS headers
+        // Ensure that all responses have the CORS headers.
         res.add_header("Access-Control-Allow-Origin", "*");
         res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.add_header("Access-Control-Allow-Headers",
-                       "Content-Type, Authorization, Accept, Origin");
+        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin");
     }
 };
-
-
-
 
 // -----------------------------------------------------------------------------
 // JWT Utility Functions
@@ -176,9 +217,11 @@ int main() {
 
     crow::App<CORSMiddleware, JWTMiddleware> app;
 
-    // -------------------------------------------------------------------------
-    // Root endpoint: connectivity test
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Group 0: Connectivity and Database Info Endpoints
+    // =========================================================================
+
+    // ----- Endpoint 0.1: Connectivity Test -----
     CROW_ROUTE(app, "/").methods("GET"_method)
     ([]() {
         crow::json::wvalue res_json;
@@ -186,9 +229,7 @@ int main() {
         return crow::response(200, res_json);
     });
 
-    // -------------------------------------------------------------------------
-    // Database structure endpoint
-    // -------------------------------------------------------------------------
+    // ----- Endpoint 0.2: Database Structure -----
     CROW_ROUTE(app, "/api/db-structure").methods("GET"_method)
     ([&db](const crow::request& req) {
         try {
@@ -209,9 +250,133 @@ int main() {
         }
     });
 
-    // -------------------------------------------------------------------------
-    // Surf Locations (GET /api/surf-locations)
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Group 1: Account Endpoints
+    // =========================================================================
+
+    // ----- Endpoint 1.1: Create Account -----
+    CROW_ROUTE(app, "/api/create-account").methods("POST"_method)
+    ([&accounts_collection](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        crow::json::wvalue response_json;
+        if (!body) {
+            response_json["success"] = false;
+            response_json["message"] = "Invalid JSON";
+            return crow::response(400, response_json);
+        }
+        std::string username = body["username"].s();
+        std::string password = body["password"].s();
+        std::string email = body["email"].s();
+        if (username.empty() || password.empty() || email.empty()) {
+            response_json["success"] = false;
+            response_json["message"] = "username, password, and email are required";
+            return crow::response(400, response_json);
+        }
+        auto filter = bsoncxx::builder::stream::document{}
+                        << "username" << username
+                        << bsoncxx::builder::stream::finalize;
+        auto existing = accounts_collection.find_one(filter.view());
+        if (existing) {
+            response_json["success"] = false;
+            response_json["message"] = "Account already exists";
+            return crow::response(409, response_json);
+        }
+        auto insert_result = accounts_collection.insert_one(
+            bsoncxx::builder::stream::document{}
+                << "username" << username
+                << "password" << password
+                << "email" << email
+                << bsoncxx::builder::stream::finalize
+        );
+        if (!insert_result) {
+            response_json["success"] = false;
+            response_json["message"] = "Failed to create account";
+            return crow::response(500, response_json);
+        }
+        response_json["success"] = true;
+        response_json["message"] = "Account created successfully";
+        return crow::response(200, response_json);
+    });
+
+    // ----- Endpoint 1.2: Login -----
+    CROW_ROUTE(app, "/api/login").methods("POST"_method)
+    ([&accounts_collection, &session_mutex, &active_sessions](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        crow::json::wvalue response_json;
+        if (!body) {
+            response_json["success"] = false;
+            response_json["message"] = "Invalid JSON";
+            return crow::response(400, response_json);
+        }
+        std::string username = body["username"].s();
+        std::string password = body["password"].s();
+        if (username.empty() || password.empty()) {
+            response_json["success"] = false;
+            response_json["message"] = "Username and password are required";
+            return crow::response(400, response_json);
+        }
+        auto filter = bsoncxx::builder::stream::document{}
+                        << "username" << username
+                        << "password" << password
+                        << bsoncxx::builder::stream::finalize;
+        auto result = accounts_collection.find_one(filter.view());
+        if (!result) {
+            response_json["success"] = false;
+            response_json["message"] = "Invalid username or password";
+            return crow::response(401, response_json);
+        }
+        auto view = result->view();
+        std::string user_id = view["_id"].get_oid().value.to_string();
+        {
+            std::lock_guard<std::mutex> lock(session_mutex);
+            int current_sessions = active_sessions[username];
+            if (current_sessions >= 2) {
+                response_json["success"] = false;
+                response_json["message"] = "Maximum concurrent sessions reached for this account";
+                return crow::response(403, response_json);
+            }
+            active_sessions[username] = current_sessions + 1;
+        }
+        std::string token = generate_jwt(user_id, username);
+        response_json["success"] = true;
+        response_json["token"] = token;
+        response_json["userId"] = user_id;
+        response_json["username"] = username;
+        return crow::response(200, response_json);
+    });
+
+    // =========================================================================
+    // Group 2: Surf Location Endpoints
+    // =========================================================================
+
+    // ----- Endpoint 2.1: Insert Surf Location -----
+    CROW_ROUTE(app, "/api/insert-surf-location").methods("POST"_method)
+    ([&db](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return crow::response(400, "Invalid JSON");
+        }
+        auto collection = db["SurfLocation"];
+        try {
+            auto insert_result = collection.insert_one(
+                bsoncxx::builder::stream::document{}
+                    << "countryName" << body["countryName"].s()
+                    << "locationName" << body["locationName"].s()
+                    << "breakType" << body["breakType"].s()
+                    << "surfScore" << std::stoi(body["surfScore"].s())
+                    << "userId" << body["userId"].s()
+                    << bsoncxx::builder::stream::finalize
+            );
+            if (!insert_result) {
+                return crow::response(500, "Insertion failed");
+            }
+            return crow::response(200, "Surf location inserted successfully");
+        } catch (const std::exception& e) {
+            return crow::response(500, std::string("Error: ") + e.what());
+        }
+    });
+
+    // ----- Endpoint 2.2: Get Surf Locations (Summaries) -----
     CROW_ROUTE(app, "/api/surf-locations").methods("GET"_method)
     ([&db, &search_semaphore](const crow::request& req) {
         try {
@@ -272,135 +437,118 @@ int main() {
         }
     });
 
-    // -------------------------------------------------------------------------
-    // Insert Surf Location (POST /api/insert-surf-location)
-    // -------------------------------------------------------------------------
-    CROW_ROUTE(app, "/api/insert-surf-location").methods("POST"_method)
+    // ----- Endpoint 2.3: Get Location Details (Location Info & Posts) -----
+    CROW_ROUTE(app, "/api/location-details").methods("GET"_method)
+    ([&db, &search_semaphore](const crow::request& req) {
+        try {
+            search_semaphore.acquire();
+            auto locationName = req.url_params.get("locationName");
+            if (!locationName) {
+                search_semaphore.release();
+                return crow::response(400, "{\"error\": \"locationName parameter is required\"}");
+            }
+            std::string location_str(locationName);
+
+            // Fetch location from "SurfLocation"
+            auto surf_collection = db["SurfLocation"];
+            bsoncxx::builder::stream::document location_query;
+            location_query << "locationName" << location_str;
+            auto location_cursor = surf_collection.find(location_query.view());
+            std::vector<bsoncxx::document::value> location_results;
+            for (auto&& doc : location_cursor) {
+                location_results.push_back(bsoncxx::document::value(doc));
+            }
+            if (location_results.empty()) {
+                search_semaphore.release();
+                return crow::response(404, "{\"error\": \"Location not found\"}");
+            }
+
+            // Fetch posts from "Post"
+            auto post_collection = db["Post"];
+            bsoncxx::builder::stream::document post_query;
+            post_query << "locationName" << location_str;
+            auto post_cursor = post_collection.find(post_query.view());
+            std::vector<bsoncxx::document::value> post_results;
+            for (auto&& doc : post_cursor) {
+                post_results.push_back(bsoncxx::document::value(doc));
+            }
+
+            // Combine location and posts
+            std::vector<bsoncxx::document::value> combined_results;
+            combined_results.insert(combined_results.end(), location_results.begin(), location_results.end());
+            combined_results.insert(combined_results.end(), post_results.begin(), post_results.end());
+
+            // Build JSON array string
+            std::string json_result = "[";
+            for (size_t i = 0; i < combined_results.size(); ++i) {
+                json_result += bsoncxx::to_json(combined_results[i]);
+                if (i < combined_results.size() - 1) {
+                    json_result += ",";
+                }
+            }
+            json_result += "]";
+
+            search_semaphore.release();
+
+            auto res = crow::response(json_result);
+            res.code = 200;
+            res.add_header("Content-Type", "application/json");
+            return res;
+        } catch (const std::exception& e) {
+            search_semaphore.release();
+            std::string error_msg = "{\"error\": \"" + std::string(e.what()) + "\"}";
+            auto res = crow::response(500, error_msg);
+            res.add_header("Content-Type", "application/json");
+            return res;
+        }
+    });
+
+    // =========================================================================
+    // Group 3: Post Endpoints
+    // =========================================================================
+
+    // ----- Endpoint 3.1: Create Post -----
+    CROW_ROUTE(app, "/api/create-post").methods("POST"_method)
     ([&db](const crow::request& req) {
         auto body = crow::json::load(req.body);
         if (!body) {
-            return crow::response(400, "Invalid JSON");
+            return crow::response(400, "{\"success\": false, \"message\": \"Invalid JSON\"}");
         }
-        auto collection = db["SurfLocation"];
-        try {
-            auto insert_result = collection.insert_one(
-                bsoncxx::builder::stream::document{}
-                    << "countryName" << body["countryName"].s()
-                    << "locationName" << body["locationName"].s()
-                    << "breakType" << body["breakType"].s()
-                    << "surfScore" << std::stoi(body["surfScore"].s())
-                    << "userId" << body["userId"].s()
-                    << bsoncxx::builder::stream::finalize
-            );
-            if (!insert_result) {
-                return crow::response(500, "Insertion failed");
+        
+        // Use std::async to explicitly schedule the database insertion in another thread.
+        auto futureResult = std::async(std::launch::async, [&db, body]() -> std::string {
+            try {
+                auto post_collection = db["Post"];
+                auto insert_result = post_collection.insert_one(
+                    bsoncxx::builder::stream::document{}
+                        << "userId" << body["userId"].s()
+                        << "locationName" << body["locationName"].s()
+                        << "description" << body["description"].s()
+                        << "timestamp" << bsoncxx::types::b_date(std::chrono::system_clock::now())
+                        << "TotalLikes" << 0
+                        << "TotalComments" << 0
+                        << bsoncxx::builder::stream::finalize
+                );
+                if (!insert_result) {
+                    return std::string("{\"success\": false, \"message\": \"Failed to insert post\"}");
+                }
+                return std::string("{\"success\": true, \"message\": \"Post created successfully\"}");
+            } catch (const std::exception& e) {
+                return std::string("{\"success\": false, \"message\": \"") + e.what() + "\"}";
             }
-            return crow::response(200, "Surf location inserted successfully");
-        } catch (const std::exception& e) {
-            return crow::response(500, std::string("Error: ") + e.what());
-        }
+        });
+        
+        // Wait for the task to complete and return its result.
+        std::string result_str = futureResult.get();
+        return crow::response(200, result_str);
     });
 
-    // -------------------------------------------------------------------------
-    // Create Account (POST /api/create-account)
-    // -------------------------------------------------------------------------
-    CROW_ROUTE(app, "/api/create-account").methods("POST"_method)
-    ([&accounts_collection](const crow::request& req) {
-        auto body = crow::json::load(req.body);
-        crow::json::wvalue response_json;
-        if (!body) {
-            response_json["success"] = false;
-            response_json["message"] = "Invalid JSON";
-            return crow::response(400, response_json);
-        }
-        std::string username = body["username"].s();
-        std::string password = body["password"].s();
-        std::string email = body["email"].s();
-        if (username.empty() || password.empty() || email.empty()) {
-            response_json["success"] = false;
-            response_json["message"] = "username, password, and email are required";
-            return crow::response(400, response_json);
-        }
-        auto filter = bsoncxx::builder::stream::document{}
-                        << "username" << username
-                        << bsoncxx::builder::stream::finalize;
-        auto existing = accounts_collection.find_one(filter.view());
-        if (existing) {
-            response_json["success"] = false;
-            response_json["message"] = "Account already exists";
-            return crow::response(409, response_json);
-        }
-        auto insert_result = accounts_collection.insert_one(
-            bsoncxx::builder::stream::document{}
-                << "username" << username
-                << "password" << password
-                << "email" << email
-                << bsoncxx::builder::stream::finalize
-        );
-        if (!insert_result) {
-            response_json["success"] = false;
-            response_json["message"] = "Failed to create account";
-            return crow::response(500, response_json);
-        }
-        response_json["success"] = true;
-        response_json["message"] = "Account created successfully";
-        return crow::response(200, response_json);
-    });
 
-    // -------------------------------------------------------------------------
-    // Login (POST /api/login)
-    // -------------------------------------------------------------------------
-    CROW_ROUTE(app, "/api/login").methods("POST"_method)
-    ([&accounts_collection, &session_mutex, &active_sessions](const crow::request& req) {
-        auto body = crow::json::load(req.body);
-        crow::json::wvalue response_json;
-        if (!body) {
-            response_json["success"] = false;
-            response_json["message"] = "Invalid JSON";
-            return crow::response(400, response_json);
-        }
-        std::string username = body["username"].s();
-        std::string password = body["password"].s();
-        if (username.empty() || password.empty()) {
-            response_json["success"] = false;
-            response_json["message"] = "Username and password are required";
-            return crow::response(400, response_json);
-        }
-        auto filter = bsoncxx::builder::stream::document{}
-                        << "username" << username
-                        << "password" << password
-                        << bsoncxx::builder::stream::finalize;
-        auto result = accounts_collection.find_one(filter.view());
-        if (!result) {
-            response_json["success"] = false;
-            response_json["message"] = "Invalid username or password";
-            return crow::response(401, response_json);
-        }
-        auto view = result->view();
-        std::string user_id = view["_id"].get_oid().value.to_string();
-        {
-            std::lock_guard<std::mutex> lock(session_mutex);
-            int current_sessions = active_sessions[username];
-            if (current_sessions >= 2) {
-                response_json["success"] = false;
-                response_json["message"] = "Maximum concurrent sessions reached for this account";
-                return crow::response(403, response_json);
-            }
-            active_sessions[username] = current_sessions + 1;
-        }
-        std::string token = generate_jwt(user_id, username);
-        response_json["success"] = true;
-        response_json["token"] = token;
-        response_json["userId"] = user_id;
-        response_json["username"] = username;
-        return crow::response(200, response_json);
-    });
+    // =========================================================================
+    // Group 4: Comment Endpoints
+    // =========================================================================
 
-    // ===================== New Endpoints for Comment Functionality =====================
-
-    // -------------------------------------------------------------------------
-    // Create Comment (POST /api/create-comment)
-    // -------------------------------------------------------------------------
+    // ----- Endpoint 4.1: Create Comment -----
     CROW_ROUTE(app, "/api/create-comment").methods("POST"_method)
     ([&db](const crow::request& req) {
         auto body = crow::json::load(req.body);
@@ -427,44 +575,50 @@ int main() {
         }
     });
 
-    // -------------------------------------------------------------------------
-    // Get Post Comments (GET /api/post-comments)
-    // -------------------------------------------------------------------------
+    // ----- Endpoint 4.2: Get Post Comments -----
     CROW_ROUTE(app, "/api/post-comments").methods("GET"_method)
     ([&db](const crow::request& req) {
         auto postId = req.url_params.get("postId");
         if (!postId) {
             return crow::response(400, "Missing postId parameter");
         }
-        auto comments_collection = db["Comments"];
-        bsoncxx::builder::stream::document query_builder;
-        query_builder << "postId" << postId;
-        auto cursor = comments_collection.find(query_builder.view());
         
-        crow::json::wvalue result;
-        crow::json::wvalue::list comments_list;
-        for (auto&& doc : cursor) {
-            std::string doc_str = bsoncxx::to_json(doc);
-            auto rdoc = crow::json::load(doc_str);
-            if (!rdoc)
-                continue;
-            crow::json::wvalue doc_json = std::move(rdoc);
-            if (doc_json["_id"].t() == crow::json::type::Object) {
-                std::string oid_dump = doc_json["_id"]["$oid"].dump();
-                if (!oid_dump.empty() && oid_dump.front() == '"' && oid_dump.back() == '"') {
-                    oid_dump = oid_dump.substr(1, oid_dump.size() - 2);
+        // Use std::async to schedule the retrieval and processing of comments.
+        auto futureResult = std::async(std::launch::async, [&db, postId]() -> crow::response {
+            auto comments_collection = db["Comments"];
+            bsoncxx::builder::stream::document query_builder;
+            query_builder << "postId" << postId;
+            auto cursor = comments_collection.find(query_builder.view());
+            
+            crow::json::wvalue result;
+            crow::json::wvalue::list comments_list;
+            for (auto&& doc : cursor) {
+                std::string doc_str = bsoncxx::to_json(doc);
+                auto rdoc = crow::json::load(doc_str);
+                if (!rdoc)
+                    continue;
+                crow::json::wvalue doc_json = std::move(rdoc);
+                if (doc_json["_id"].t() == crow::json::type::Object) {
+                    std::string oid_dump = doc_json["_id"]["$oid"].dump();
+                    if (!oid_dump.empty() && oid_dump.front() == '"' && oid_dump.back() == '"') {
+                        oid_dump = oid_dump.substr(1, oid_dump.size() - 2);
+                    }
+                    doc_json["commentId"] = std::move(crow::json::wvalue(oid_dump));
                 }
-                doc_json["commentId"] = std::move(crow::json::wvalue(oid_dump));
+                comments_list.push_back(doc_json);
             }
-            comments_list.push_back(doc_json);
-        }
-        result["comments"] = std::move(comments_list);
-        return crow::response(200, result);
+            result["comments"] = std::move(comments_list);
+            crow::response res(result);
+            res.code = 200;
+            res.add_header("Content-Type", "application/json");
+            return res;
+        });
+        
+        return futureResult.get();
     });
 
-    // -------------------------------------------------------------------------
-    // Like Comment (POST /api/like-comment)
-    // -------------------------------------------------------------------------
+
+    // ----- Endpoint 4.3: Like Comment -----
     CROW_ROUTE(app, "/api/like-comment").methods("POST"_method)
     ([&db](const crow::request& req) {
         auto body = crow::json::load(req.body);
@@ -494,107 +648,9 @@ int main() {
         }
     });
 
-    // -------------------------------------------------------------------------
-    // Location Details Endpoint (GET /api/location-details)
-    // -------------------------------------------------------------------------
-    CROW_ROUTE(app, "/api/location-details").methods("GET"_method)
-    ([&db, &search_semaphore](const crow::request& req) {
-        try {
-            search_semaphore.acquire();
-            auto locationName = req.url_params.get("locationName");
-            if (!locationName) {
-                search_semaphore.release();
-                return crow::response(400, "{\"error\": \"locationName parameter is required\"}");
-            }
-            std::string location_str(locationName);
-
-            // 1. Fetch location from "SurfLocation"
-            auto surf_collection = db["SurfLocation"];
-            bsoncxx::builder::stream::document location_query;
-            location_query << "locationName" << location_str;
-            auto location_cursor = surf_collection.find(location_query.view());
-            std::vector<bsoncxx::document::value> location_results;
-            for (auto&& doc : location_cursor) {
-                location_results.push_back(bsoncxx::document::value(doc));
-            }
-
-            // If not found, return 404
-            if (location_results.empty()) {
-                search_semaphore.release();
-                return crow::response(404, "{\"error\": \"Location not found\"}");
-            }
-
-            // 2. Fetch posts from "Post"
-            auto post_collection = db["Post"];
-            bsoncxx::builder::stream::document post_query;
-            post_query << "locationName" << location_str;
-            auto post_cursor = post_collection.find(post_query.view());
-            std::vector<bsoncxx::document::value> post_results;
-            for (auto&& doc : post_cursor) {
-                post_results.push_back(bsoncxx::document::value(doc));
-            }
-
-            // 3. Combine location and posts
-            std::vector<bsoncxx::document::value> combined_results;
-            combined_results.insert(combined_results.end(), location_results.begin(), location_results.end());
-            combined_results.insert(combined_results.end(), post_results.begin(), post_results.end());
-
-            // 4. Build JSON array string
-            std::string json_result = "[";
-            for (size_t i = 0; i < combined_results.size(); ++i) {
-                json_result += bsoncxx::to_json(combined_results[i]);
-                if (i < combined_results.size() - 1) {
-                    json_result += ",";
-                }
-            }
-            json_result += "]";
-
-            search_semaphore.release();
-
-            auto res = crow::response(json_result);
-            res.code = 200;
-            res.add_header("Content-Type", "application/json");
-            return res;
-        } catch (const std::exception& e) {
-            search_semaphore.release();
-            std::string error_msg = "{\"error\": \"" + std::string(e.what()) + "\"}";
-            auto res = crow::response(500, error_msg);
-            res.add_header("Content-Type", "application/json");
-            return res;
-        }
-    });
-
-    CROW_ROUTE(app, "/api/create-post").methods("POST"_method)
-    ([&db](const crow::request& req) {
-        auto body = crow::json::load(req.body);
-        if (!body) {
-            return crow::response(400, "{\"success\": false, \"message\": \"Invalid JSON\"}");
-        }
-        try {
-            auto post_collection = db["Post"];
-            auto insert_result = post_collection.insert_one(
-                bsoncxx::builder::stream::document{}
-                    << "userId" << body["userId"].s()
-                    << "locationName" << body["locationName"].s()
-                    << "description" << body["description"].s()
-                    << "timestamp" << bsoncxx::types::b_date(std::chrono::system_clock::now())
-                    << "TotalLikes" << 0
-                    << "TotalComments" << 0
-                    << bsoncxx::builder::stream::finalize
-            );
-            if (!insert_result) {
-                return crow::response(500, "{\"success\": false, \"message\": \"Failed to insert post\"}");
-            }
-            return crow::response(200, "{\"success\": true, \"message\": \"Post created successfully\"}");
-        } catch (const std::exception& e) {
-            return crow::response(500, std::string("{\"success\": false, \"message\": \"") + e.what() + "\"}");
-        }
-    });
-
-
-    // -------------------------------------------------------------------------
-    // Run the server
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Start the Server
+    // =========================================================================
     std::cout << "Starting server on port " << port << "...\n";
     app.port(port).multithreaded().run();
     return 0;

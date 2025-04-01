@@ -58,20 +58,34 @@ const std::string jwt_secret = jwt_secret_env ? jwt_secret_env : "fallback_jwt_s
 // -----------------------------------------------------------------------------
 struct CORSMiddleware {
     struct context {};
+
     void before_handle(crow::request& req, crow::response& res, context& ctx) {
+        // If the request is a preflight OPTIONS request, respond with 200 OK.
         if (req.method == crow::HTTPMethod::OPTIONS) {
+            res.code = 200;
             res.add_header("Access-Control-Allow-Origin", "*");
             res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-            res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+
+            // Important: include "Origin" in allowed headers if you manually set it in any fetch calls.
+            res.add_header("Access-Control-Allow-Headers",
+                           "Content-Type, Authorization, Accept, Origin");
+
             res.end();
+            return;
         }
     }
+
     void after_handle(crow::request& req, crow::response& res, context& ctx) {
+        // Ensure that all responses (including non-OPTIONS) have the CORS headers
         res.add_header("Access-Control-Allow-Origin", "*");
         res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.add_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+        res.add_header("Access-Control-Allow-Headers",
+                       "Content-Type, Authorization, Accept, Origin");
     }
 };
+
+
+
 
 // -----------------------------------------------------------------------------
 // JWT Utility Functions
@@ -434,24 +448,19 @@ int main() {
             auto rdoc = crow::json::load(doc_str);
             if (!rdoc)
                 continue;
-            // Move the read-only JSON into a mutable wvalue
             crow::json::wvalue doc_json = std::move(rdoc);
-            // If _id exists as an object, extract the "$oid" string value
             if (doc_json["_id"].t() == crow::json::type::Object) {
                 std::string oid_dump = doc_json["_id"]["$oid"].dump();
-                // Remove surrounding quotes (dump() returns the string with quotes)
                 if (!oid_dump.empty() && oid_dump.front() == '"' && oid_dump.back() == '"') {
                     oid_dump = oid_dump.substr(1, oid_dump.size() - 2);
                 }
                 doc_json["commentId"] = std::move(crow::json::wvalue(oid_dump));
-                // Optionally, you could remove the original _id field if desired.
             }
             comments_list.push_back(doc_json);
         }
         result["comments"] = std::move(comments_list);
         return crow::response(200, result);
     });
-
 
     // -------------------------------------------------------------------------
     // Like Comment (POST /api/like-comment)
@@ -485,7 +494,9 @@ int main() {
         }
     });
 
+    // -------------------------------------------------------------------------
     // Location Details Endpoint (GET /api/location-details)
+    // -------------------------------------------------------------------------
     CROW_ROUTE(app, "/api/location-details").methods("GET"_method)
     ([&db, &search_semaphore](const crow::request& req) {
         try {
@@ -519,10 +530,9 @@ int main() {
             post_query << "locationName" << location_str;
             auto post_cursor = post_collection.find(post_query.view());
             std::vector<bsoncxx::document::value> post_results;
-
-            // (existing logic that enriches each post with likes/comments)
-            // ...
-            // push_back each enriched post to post_results
+            for (auto&& doc : post_cursor) {
+                post_results.push_back(bsoncxx::document::value(doc));
+            }
 
             // 3. Combine location and posts
             std::vector<bsoncxx::document::value> combined_results;
@@ -541,11 +551,9 @@ int main() {
 
             search_semaphore.release();
 
-            // 5. Return response
             auto res = crow::response(json_result);
             res.code = 200;
             res.add_header("Content-Type", "application/json");
-            // Do NOT add extra CORS headers here; CORSMiddleware handles that
             return res;
         } catch (const std::exception& e) {
             search_semaphore.release();
@@ -553,6 +561,33 @@ int main() {
             auto res = crow::response(500, error_msg);
             res.add_header("Content-Type", "application/json");
             return res;
+        }
+    });
+
+    CROW_ROUTE(app, "/api/create-post").methods("POST"_method)
+    ([&db](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return crow::response(400, "{\"success\": false, \"message\": \"Invalid JSON\"}");
+        }
+        try {
+            auto post_collection = db["Post"];
+            auto insert_result = post_collection.insert_one(
+                bsoncxx::builder::stream::document{}
+                    << "userId" << body["userId"].s()
+                    << "locationName" << body["locationName"].s()
+                    << "description" << body["description"].s()
+                    << "timestamp" << bsoncxx::types::b_date(std::chrono::system_clock::now())
+                    << "TotalLikes" << 0
+                    << "TotalComments" << 0
+                    << bsoncxx::builder::stream::finalize
+            );
+            if (!insert_result) {
+                return crow::response(500, "{\"success\": false, \"message\": \"Failed to insert post\"}");
+            }
+            return crow::response(200, "{\"success\": true, \"message\": \"Post created successfully\"}");
+        } catch (const std::exception& e) {
+            return crow::response(500, std::string("{\"success\": false, \"message\": \"") + e.what() + "\"}");
         }
     });
 

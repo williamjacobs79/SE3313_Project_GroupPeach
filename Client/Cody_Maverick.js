@@ -9,10 +9,12 @@ const backToLoginButton = document.getElementById("back-to-login-btn");
 const loginButton = document.getElementById("login-btn");
 const createButton = document.getElementById("create-btn");
 const userDisplay = document.getElementById("user-display");
+const signOutButton = document.getElementById("sign-out");
 
 // Load surf locations when the page first loads
 document.addEventListener('DOMContentLoaded', () => {
     loadSurfLocations();
+    updateAuthUI();
 });
 
 // Show Modal
@@ -49,7 +51,7 @@ loginButton.addEventListener("click", async () => {
       headers: { 
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Origin": "http://localhost:8000"
+        "Origin": "http://localhost:8000"  // This header is kept for login
       },
       credentials: 'omit',
       body: JSON.stringify({ username, password }),
@@ -58,14 +60,12 @@ loginButton.addEventListener("click", async () => {
     const result = await response.json();
 
     if (result.success) {
-      userDisplay.innerText = `Welcome, ${username}`;
+      localStorage.setItem("loggedInUser", JSON.stringify({ 
+        userId: result.userId, 
+        username: result.username 
+      }));
+      updateAuthUI();
       modal.style.display = "none";
-
-      // Store logged-in user information in local storage
-      localStorage.setItem(
-        "loggedInUser",
-        JSON.stringify({ userId: result.userId, username })
-      );
     } else {
       alert(result.message || "Login failed. Please try again.");
     }
@@ -88,7 +88,7 @@ createButton.addEventListener("click", async () => {
       headers: { 
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Origin": "http://localhost:8000"
+        "Origin": "http://localhost:8000"  // This header is kept for create-account
       },
       credentials: 'omit',
       body: JSON.stringify({
@@ -105,7 +105,7 @@ createButton.addEventListener("click", async () => {
       createAccountForm.style.display = "none";
       loginForm.style.display = "block";
     } else {
-      alert(`Failed to create account: ${result.error || "Unknown error"}`);
+      alert(`Failed to create account: ${result.message || "Unknown error"}`);
     }
   } catch (error) {
     console.error("Error creating account:", error);
@@ -203,74 +203,111 @@ async function loadLocationDetails(locationName) {
     const mainContent = document.getElementById("main-content");
     mainContent.innerHTML = ""; // Clear previous content
 
-    if (data.length === 0) {
-      mainContent.innerHTML = `<p>No data available for this location.</p>`;
-      return;
-    }
-
-    // Get location information and posts
-    const location = data[0];
-    const posts = data.filter((post) => post.postId !== null);
-
-    // Display location details (you can add additional info if needed)
-    mainContent.innerHTML = `
-      <h2>${locationName}</h2>
-      <div id="location-info">
-        <!-- Additional location information can go here -->
-      </div>
-      <h3>Posts:</h3>
-      <div id="post-tiles" class="tiles-container"></div>
-    `;
-
-    // Display all posts
-    const postTiles = document.getElementById("post-tiles");
-    posts.forEach((post) => {
-      const tile = document.createElement("div");
-      tile.classList.add("tile", "post-tile");
-      tile.dataset.postId = post.postId;
-      tile.innerHTML = `
-        <h3>Post ID: ${post.postId}</h3>
-        <p>${post.descript}</p>
-        <p>Likes: ${post.TotalLikes || 0}</p>
-        <p>Comments: ${post.TotalComments || 0}</p>
-      `;
-      postTiles.appendChild(tile);
-    });
-
-    // Attach event listeners for post tiles to load post details
-    addPostTileEventListeners();
-
-    // Create and append comment section
-    const commentSection = document.createElement("div");
-    // Check if a user is logged in
+    // Check if user is logged in
     const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
-    if (loggedInUser) {
-      commentSection.innerHTML = `
-        <h3>Add a Comment:</h3>
-        <form id="create-comment-form">
-          <textarea id="comment-description" placeholder="Write your comment here..." required></textarea>
-          <button type="submit">Upload Comment</button>
-        </form>
+
+    // Updated Create Post Section with nicer UI
+    const createPostSection = loggedInUser 
+      ? `
+        <div class="create-post-section">
+          <h3>Create a Post</h3>
+          <form id="create-post-form">
+            <textarea id="post-description" placeholder="Share your experience at ${locationName}..." required></textarea>
+            <button type="submit" id="create-post-button">Post It!</button>
+          </form>
+        </div>
+      ` 
+      : `<p>You must be logged in to create a post.</p>`;
+
+    if (data.length === 0) {
+      mainContent.innerHTML = `
+        <h2>${locationName}</h2>
+        ${createPostSection}
+        <p>No data available for this location.</p>
       `;
     } else {
-      commentSection.innerHTML = `<p>You must be logged in to add a comment.</p>`;
-    }
-    mainContent.appendChild(commentSection);
+      // Get posts from data (filtering posts with valid _id)
+      const posts = data.filter((post) => post._id && (typeof post._id === "string" || post._id.$oid));
+      console.log("Posts:", posts);
 
-    // If user is logged in, set up the comment submission event listener
+      // Display location details with posts
+      mainContent.innerHTML = `
+        <h2>${locationName}</h2>
+        ${createPostSection}
+        <h3>Posts:</h3>
+        <div id="post-tiles" class="tiles-container"></div>
+      `;
+
+      // Display all posts
+      const postTiles = document.getElementById("post-tiles");
+      
+      if (posts.length === 0) {
+        postTiles.innerHTML = `<p>No posts yet. Be the first to post!</p>`;
+      } else {
+        posts.forEach((post) => {
+          const tile = document.createElement("div");
+          tile.classList.add("tile", "post-tile");
+          const postId = post._id?.$oid || post._id;
+          tile.dataset.postId = postId;
+          
+          tile.innerHTML = `
+            <p>${post.description || "No description provided"}</p>
+            <p><strong>Posted by:</strong> ${post.userId || "Unknown"}</p>
+            <p><strong>Likes:</strong> ${post.TotalLikes || 0}</p>
+            <p><strong>Comments:</strong> ${post.TotalComments || 0}</p>
+          `;
+          postTiles.appendChild(tile);
+        });
+
+        // Attach event listeners for post tiles to load post details
+        addPostTileEventListeners();
+      }
+    }
+
+    // Updated create post event listener for CORS issue:
+    // No custom "Origin" header is set here.
     if (loggedInUser) {
-      const createCommentForm = document.getElementById("create-comment-form");
-      createCommentForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const description = document.getElementById("comment-description").value.trim();
-        // Assumes the first post is the one to comment on (adjust if necessary)
-        if (posts.length > 0) {
-          await createComment(posts[0].postId, description);
-        }
-      });
+      const createPostForm = document.getElementById("create-post-form");
+      if (createPostForm) {
+        createPostForm.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const description = document.getElementById("post-description").value.trim();
+          try {
+            const response = await fetch("http://localhost:3000/api/create-post", {
+              method: "POST",
+              mode: 'cors',
+              headers: { 
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+              },
+              body: JSON.stringify({
+                userId: loggedInUser.userId,
+                locationName: locationName,
+                description: description
+              }),
+            });
+            const result = await response.json();
+            if (result.success) {
+              alert("Post created successfully!");
+              // Reload the location details to show the new post
+              loadLocationDetails(locationName);
+            } else {
+              alert(`Failed to create post: ${result.message || "Unknown error"}`);
+            }
+          } catch (error) {
+            console.error("Error creating post:", error);
+            alert("An error occurred while creating the post.");
+          }
+        });
+      }
     }
   } catch (error) {
     console.error("Error loading location details:", error);
+    const mainContent = document.getElementById("main-content");
+    mainContent.innerHTML = `
+      <h2>${locationName}</h2>
+      <p>Error loading location details. Please try again.</p>
+    `;
   }
 }
 
@@ -286,6 +323,7 @@ async function likeComment(commentId) {
   try {
     const response = await fetch("http://localhost:3000/api/like-comment", {
       method: "POST",
+      mode: 'cors',
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId: loggedInUser.userId, commentId }),
     });
@@ -295,9 +333,11 @@ async function likeComment(commentId) {
     if (result.success) {
       // Update the like count dynamically
       const likeCountElement = document.querySelector(`.like-count[data-comment-id="${commentId}"]`);
-      likeCountElement.textContent = parseInt(likeCountElement.textContent) + 1;
+      if (likeCountElement) {
+        likeCountElement.textContent = parseInt(likeCountElement.textContent) + 1;
+      }
     } else {
-      alert(`Failed to like comment: ${result.error || "Unknown error"}`);
+      alert(`Failed to like comment: ${result.message || "Unknown error"}`);
     }
   } catch (error) {
     console.error("Error liking comment:", error);
@@ -322,6 +362,7 @@ async function createComment(postId, description) {
   try {
     const response = await fetch("http://localhost:3000/api/create-comment", {
       method: "POST",
+      mode: 'cors',
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         postId,
@@ -336,7 +377,7 @@ async function createComment(postId, description) {
       alert("Comment created successfully!");
       loadPostDetails(postId); // Reload comments after creating a new one
     } else {
-      alert(`Failed to create comment: ${result.error || "Unknown error"}`);
+      alert(`Failed to create comment: ${result.message || "Unknown error"}`);
     }
   } catch (error) {
     console.error("Error creating comment:", error);
@@ -353,6 +394,111 @@ function addPostTileEventListeners() {
       console.error("Post ID is undefined for a tile.");
       return;
     }
-    tile.addEventListener("click", () => loadPostDetails(postId));
+    tile.addEventListener("click", () => loadLocationDetails(postId));
   });
 }
+
+// Function to load details for a specific post
+async function loadPostDetails(postId) {
+  try {
+    console.log("Loading post details for ID:", postId);
+    const response = await fetch(`http://localhost:3000/api/post-comments?postId=${postId}`);
+    const result = await response.json();
+    const comments = result.comments || [];
+
+    console.log("Comments:", comments);
+    console.log("Number of comments:", comments.length);
+
+    const mainContent = document.getElementById("main-content");
+    const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+
+    mainContent.innerHTML = `
+      <h2>Post Details</h2>
+      <button id="back-to-location" class="button">Back to Location</button>
+      <div id="post-details"></div>
+      <h3>Comments:</h3>
+      <div id="comment-tiles" class="tiles-container"></div>
+      ${
+        loggedInUser
+          ? `
+          <h3>Add a Comment:</h3>
+          <form id="create-comment-form">
+              <textarea id="comment-description" placeholder="Write your comment here..." required></textarea>
+              <button type="submit">Add Comment</button>
+          </form>
+        `
+          : `<p>You must be logged in to add a comment.</p>`
+      }
+    `;
+
+    // Add back button functionality
+    document.getElementById("back-to-location").addEventListener("click", () => {
+      loadSurfLocations();
+    });
+
+    const commentTiles = document.getElementById("comment-tiles");
+
+    if (comments.length === 0) {
+      commentTiles.innerHTML = `<p>No comments yet. Be the first to comment!</p>`;
+    } else {
+      comments.forEach((comment) => {
+        const tile = document.createElement("div");
+        tile.classList.add("tile");
+        tile.innerHTML = `
+          <p>${comment.commentDescription}</p>
+          <p><strong>User ID:</strong> ${comment.userId}</p>
+          <p><strong>Likes:</strong> <span class="like-count" data-comment-id="${comment.commentId}">${comment.TotalLikes || 0}</span></p>
+          <button class="like-button" data-comment-id="${comment.commentId}">Like</button>
+        `;
+        commentTiles.appendChild(tile);
+      });
+
+      // Add like button listeners
+      const likeButtons = document.querySelectorAll(".like-button");
+      likeButtons.forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const commentId = btn.dataset.commentId;
+          await likeComment(commentId);
+        });
+      });
+    }
+
+    if (loggedInUser) {
+      const createCommentForm = document.getElementById("create-comment-form");
+      if (createCommentForm) {
+        createCommentForm.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const description = document.getElementById("comment-description").value.trim();
+          await createComment(postId, description);
+        });
+      }
+    }
+  } catch (error) {
+    console.error("Error loading post details:", error);
+    const mainContent = document.getElementById("main-content");
+    if (mainContent) {
+      mainContent.innerHTML += `<p>Error loading post details. Please try again.</p>`;
+    }
+  }
+}
+
+function updateAuthUI() {
+  const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+
+  if (loggedInUser) {
+    userDisplay.innerText = `Welcome, ${loggedInUser.username}`;
+    signInButton.style.display = "none";
+    signOutButton.style.display = "inline-block";
+  } else {
+    userDisplay.innerText = "";
+    signInButton.style.display = "inline-block";
+    signOutButton.style.display = "none";
+  }
+}
+
+signOutButton.addEventListener("click", () => {
+  localStorage.removeItem("loggedInUser");
+  updateAuthUI();
+  alert("Signed out!");
+  loadSurfLocations();
+});

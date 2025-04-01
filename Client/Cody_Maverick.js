@@ -20,7 +20,7 @@ signInButton.addEventListener("click", () => {
   modal.style.display = "flex";
 });
 
-// Close Modal - test
+// Close Modal
 closeModalButton.addEventListener("click", () => {
   modal.style.display = "none";
 });
@@ -37,86 +37,98 @@ backToLoginButton.addEventListener("click", () => {
   loginForm.style.display = "block";
 });
 
-//note: we understand that hard-coding localhost:3000 is not good practice in industry
-
-// Login event listener – calls the backend /api/login route
+// Login event listener
 loginButton.addEventListener("click", async () => {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
 
   try {
-      const response = await fetch("http://localhost:3000/api/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password })
-      });
-      const result = await response.json();
-      if (result.success) {
-          userDisplay.innerText = `Welcome, ${result.username}`;
-          modal.style.display = "none";
-          // Store token and user info in local storage
-          localStorage.setItem("loggedInUser", JSON.stringify({
-              token: result.token,
-              userId: result.userId,
-              username: result.username
-          }));
-      } else {
-          alert(result.message || "Login failed. Please try again.");
-      }
+    const response = await fetch("http://localhost:3000/api/login", {
+      method: "POST",
+      mode: 'cors',
+      headers: { 
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Origin": "http://localhost:8000"
+      },
+      credentials: 'omit',
+      body: JSON.stringify({ username, password }),
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      userDisplay.innerText = `Welcome, ${username}`;
+      modal.style.display = "none";
+
+      // Store logged-in user information in local storage
+      localStorage.setItem(
+        "loggedInUser",
+        JSON.stringify({ userId: result.userId, username })
+      );
+    } else {
+      alert(result.message || "Login failed. Please try again.");
+    }
   } catch (error) {
-      console.error("Error during login:", error);
-      alert("An error occurred during login.");
+    console.error("Error during login:", error);
+    alert("An error occurred during login.");
   }
 });
 
-// Create account event listener – calls the backend /api/create-account route
+// Create account event listener
 createButton.addEventListener("click", async () => {
   const newUsername = document.getElementById("new-username").value;
   const newPassword = document.getElementById("new-password").value;
   const newEmail = document.getElementById("new-email").value;
 
   try {
-      const response = await fetch("http://localhost:3000/api/create-account", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-              username: newUsername,
-              password: newPassword,
-              email: newEmail
-          })
-      });
-      const result = await response.json();
-      // Depending on your backend, you might get a JSON or a plain text response
-      if (result.success || result === "Account created successfully") {
-          alert("Account created successfully. You can now log in.");
-          createAccountForm.style.display = "none";
-          loginForm.style.display = "block";
-      } else {
-          alert(`Failed to create account: ${result.message || "Unknown error"}`);
-      }
+    const response = await fetch("http://localhost:3000/api/create-account", {
+      method: "POST",
+      mode: 'cors',
+      headers: { 
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Origin": "http://localhost:8000"
+      },
+      credentials: 'omit',
+      body: JSON.stringify({
+        username: newUsername,
+        password: newPassword,
+        email: newEmail,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      alert("Account created successfully. You can now log in.");
+      createAccountForm.style.display = "none";
+      loginForm.style.display = "block";
+    } else {
+      alert(`Failed to create account: ${result.error || "Unknown error"}`);
+    }
   } catch (error) {
-      console.error("Error creating account:", error);
-      alert("An error occurred while creating the account.");
+    console.error("Error creating account:", error);
+    alert("An error occurred while creating the account.");
   }
 });
-
 
 // Event listener for the "Surf Locations" button
 document.getElementById("surf-locations-btn").addEventListener("click", () => {
   loadSurfLocations();
 });
 
-//responsible for the surf-location 'page'
+// Function to load surf locations and display them
 async function loadSurfLocations() {
   const mainContent = document.getElementById("main-content");
   mainContent.innerHTML = `
-        <div class="search-bar">
-            <input type="text" id="search-country" placeholder="Search by Country">
-            <input type="text" id="search-location" placeholder="Search by Location">
-            <button id="search-btn">Search</button>
-        </div>
-        <div id="surf-locations" class="tiles-container"></div>
-    `;
+    <div class="search-bar">
+      <input type="text" id="search-country" placeholder="Search by Country">
+      <input type="text" id="search-location" placeholder="Search by Location">
+      <button id="search-btn">Search</button>
+    </div>
+    <div id="surf-locations" class="tiles-container"></div>
+  `;
 
   // Fetch and display all surf locations on initial load
   await fetchAndDisplayLocations();
@@ -129,24 +141,18 @@ async function loadSurfLocations() {
   });
 }
 
-//looads the surf location overviews
-async function fetchAndDisplayLocations(
-  country = "",
-  location = "",
-  filterLikes = false
-) {
+// Function to fetch and display surf locations
+async function fetchAndDisplayLocations(country = "", location = "", filterLikes = false) {
   try {
     console.log('Fetching locations with:', { country, location });
     const response = await fetch(
       `http://localhost:3000/api/surf-locations?country=${country}&location=${location}&filterLikes=${filterLikes}`,
       {
         method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-        }
+        headers: { 'Accept': 'application/json' }
       }
     );
-    
+
     const locations = await response.json();
     console.log('Received locations:', locations);
 
@@ -168,17 +174,15 @@ async function fetchAndDisplayLocations(
       const tile = document.createElement("div");
       tile.classList.add("tile");
       tile.innerHTML = `
-                <h3>${loc.locationName || 'Unnamed Location'}</h3>
-                <p>Break Type: ${loc.breakType || 'Not specified'}</p>
-                <p>Surf Score: ${loc.surfScore || 'Not rated'}</p>
-                <p>Country: ${loc.countryName || 'Not specified'}</p>
-                <p>Added by User ID: ${loc.userId || 'Unknown'}</p>
-                <p>Likes: ${loc.TotalLikes || 0}</p>
-                <p>Comments: ${loc.TotalComments || 0}</p>
-            `;
-      tile.addEventListener("click", () =>
-        loadLocationDetails(loc.locationName)
-      );
+        <h3>${loc.locationName || 'Unnamed Location'}</h3>
+        <p>Break Type: ${loc.breakType || 'Not specified'}</p>
+        <p>Surf Score: ${loc.surfScore || 'Not rated'}</p>
+        <p>Country: ${loc.countryName || 'Not specified'}</p>
+        <p>Added by User ID: ${loc.userId || 'Unknown'}</p>
+        <p>Likes: ${loc.TotalLikes || 0}</p>
+        <p>Comments: ${loc.TotalComments || 0}</p>
+      `;
+      tile.addEventListener("click", () => loadLocationDetails(loc.locationName));
       tilesContainer.appendChild(tile);
     });
   } catch (error) {
@@ -190,12 +194,10 @@ async function fetchAndDisplayLocations(
   }
 }
 
-//gets the location details when a location is clicked on
+// Function to load location details and display posts and comment section
 async function loadLocationDetails(locationName) {
   try {
-    const response = await fetch(
-      `http://localhost:3000/api/location-details?locationName=${locationName}`
-    );
+    const response = await fetch(`http://localhost:3000/api/location-details?locationName=${locationName}`);
     const data = await response.json();
 
     const mainContent = document.getElementById("main-content");
@@ -206,236 +208,73 @@ async function loadLocationDetails(locationName) {
       return;
     }
 
-    // get location information
+    // Get location information and posts
     const location = data[0];
     const posts = data.filter((post) => post.postId !== null);
 
-    // display the location details
+    // Display location details (you can add additional info if needed)
     mainContent.innerHTML = `
-            <h2>${locationName}</h2>
-            <div id="location-info">
-                <h3>Risks:</h3>
-                <div id="risks-section"></div>
-                <h3>Weather Conditions:</h3>
-                <div id="weather-section">
-                    <form id="weather-form">
-                        <input type="date" id="weather-date" required />
-                        <button type="submit">Get Weather</button>
-                    </form>
-                    <div id="weather-results"></div>
-                </div>
-            </div>
-            <h3>Posts:</h3>
-            <div id="post-tiles" class="tiles-container"></div>
-        `;
+      <h2>${locationName}</h2>
+      <div id="location-info">
+        <!-- Additional location information can go here -->
+      </div>
+      <h3>Posts:</h3>
+      <div id="post-tiles" class="tiles-container"></div>
+    `;
 
-    //load all risks for location
-    await loadSurfRisks(locationName);
-
-    // display all posts
+    // Display all posts
     const postTiles = document.getElementById("post-tiles");
     posts.forEach((post) => {
       const tile = document.createElement("div");
       tile.classList.add("tile", "post-tile");
       tile.dataset.postId = post.postId;
       tile.innerHTML = `
-                <h3>Post ID: ${post.postId}</h3>
-                <p>${post.descript}</p>
-                <p>Likes: ${post.TotalLikes || 0}</p>
-                <p>Comments: ${post.TotalComments || 0}</p>
-            `;
+        <h3>Post ID: ${post.postId}</h3>
+        <p>${post.descript}</p>
+        <p>Likes: ${post.TotalLikes || 0}</p>
+        <p>Comments: ${post.TotalComments || 0}</p>
+      `;
       postTiles.appendChild(tile);
     });
 
-    // weather form
-    const weatherForm = document.getElementById("weather-form");
-    weatherForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const date = document.getElementById("weather-date").value;
-      await loadWeatherConditions(locationName, date);
-    });
-
-    // top post button and event
-    const topPostsButton = document.createElement("button");
-    topPostsButton.innerText = "Show Top Posts";
-    topPostsButton.classList.add("top-posts-btn");
-    topPostsButton.addEventListener("click", () =>
-      fetchAndDisplayTopPosts(locationName)
-    );
-    mainContent.appendChild(topPostsButton);
-
-    // attach event listeners for post tiles
+    // Attach event listeners for post tiles to load post details
     addPostTileEventListeners();
+
+    // Create and append comment section
+    const commentSection = document.createElement("div");
+    // Check if a user is logged in
+    const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+    if (loggedInUser) {
+      commentSection.innerHTML = `
+        <h3>Add a Comment:</h3>
+        <form id="create-comment-form">
+          <textarea id="comment-description" placeholder="Write your comment here..." required></textarea>
+          <button type="submit">Upload Comment</button>
+        </form>
+      `;
+    } else {
+      commentSection.innerHTML = `<p>You must be logged in to add a comment.</p>`;
+    }
+    mainContent.appendChild(commentSection);
+
+    // If user is logged in, set up the comment submission event listener
+    if (loggedInUser) {
+      const createCommentForm = document.getElementById("create-comment-form");
+      createCommentForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const description = document.getElementById("comment-description").value.trim();
+        // Assumes the first post is the one to comment on (adjust if necessary)
+        if (posts.length > 0) {
+          await createComment(posts[0].postId, description);
+        }
+      });
+    }
   } catch (error) {
     console.error("Error loading location details:", error);
   }
 }
 
-//loads in surf location risks for passe din locaiton
-async function loadSurfRisks(locationName) {
-  try {
-    const response = await fetch(`http://localhost:3000/api/surf-risks`);
-    const risks = await response.json();
-
-    const risksSection = document.getElementById("risks-section");
-    const locationRisks = risks.find(
-      (risk) => risk.locationName === locationName
-    );
-
-    if (!locationRisks || !locationRisks.Risks) {
-      risksSection.innerHTML = `<p>No risks associated with this location.</p>`;
-    } else {
-      risksSection.innerHTML = `<p>${locationRisks.Risks}</p>`;
-    }
-  } catch (error) {
-    console.error("Error loading surf risks:", error);
-  }
-}
-
-//loads weather information (for a user-inputted date, and selected location)
-async function loadWeatherConditions(locationName, date) {
-  try {
-    const response = await fetch(
-      `http://localhost:3000/api/weather-conditions`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locationName, date }),
-      }
-    );
-    const weather = await response.json();
-
-    const weatherResults = document.getElementById("weather-results");
-    if (weather.length === 0) {
-      weatherResults.innerHTML = `<p>No weather data available for the selected date.</p>`;
-    } else {
-      const weatherDetails = weather[0];
-      weatherResults.innerHTML = `
-                <p><strong>Date:</strong> ${weatherDetails.wTimeStamp}</p>
-                <p><strong>Wave Size:</strong> ${weatherDetails.waveSize} m</p>
-                <p><strong>Wind Speed:</strong> ${
-                  weatherDetails.windSpeed
-                } km/h</p>
-                <p><strong>Precipitation:</strong> ${
-                  weatherDetails.precipitation ? "Yes" : "No"
-                }</p>
-            `;
-    }
-  } catch (error) {
-    console.error("Error loading weather conditions:", error);
-  }
-}
-
-//displays the top 5 posts (when top posts is clicked)
-async function fetchAndDisplayTopPosts(locationName) {
-  try {
-    const response = await fetch(
-      `http://localhost:3000/api/location-top-posts?locationName=${locationName}`
-    );
-    const topPosts = await response.json();
-
-    const postTiles = document.getElementById("post-tiles");
-    postTiles.innerHTML = ""; // Clear existing posts
-
-    if (topPosts.length === 0) {
-      postTiles.innerHTML = `<p>No top posts found for this location.</p>`;
-      return;
-    }
-
-    topPosts.forEach((post) => {
-      const tile = document.createElement("div");
-      tile.classList.add("tile");
-      tile.innerHTML = `
-                <h3>Post ID: ${post.postId}</h3>
-                <p>${post.descript}</p>
-                <p>Likes: ${post.TotalLikes || 0}</p>
-                <p>Comments: ${post.TotalComments || 0}</p>
-                <p>Total Interactions: ${post.TotalInteractions || 0}</p>
-            `;
-      postTiles.appendChild(tile);
-    });
-  } catch (error) {
-    console.error("Error fetching top posts:", error);
-  }
-}
-
-//loads comments and liks on comments for a post (when post is clicked on)
-async function loadPostDetails(postId) {
-  try {
-    const response = await fetch(
-      `http://localhost:3000/api/post-comments?postId=${postId}`
-    );
-    const comments = await response.json();
-
-    const mainContent = document.getElementById("main-content");
-    const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
-
-    mainContent.innerHTML = `
-            <h2>Post Details</h2>
-            <div id="post-details"></div>
-            <h3>Comments:</h3>
-            <div id="comment-tiles" class="tiles-container"></div>
-            ${
-              loggedInUser
-                ? `
-                <h3>Add a Comment:</h3>
-                <form id="create-comment-form">
-                    <textarea id="comment-description" placeholder="Write your comment here..." required></textarea>
-                    <button type="submit">Upload Comment</button>
-                </form>
-            `
-                : `<p>You must be logged in to add a comment.</p>`
-            }
-        `;
-
-    // display comments
-    const commentTiles = document.getElementById("comment-tiles");
-    if (comments.length === 0) {
-      commentTiles.innerHTML = `<p>No comments yet. Be the first to comment!</p>`;
-    } else {
-      comments.forEach((comment) => {
-        const tile = document.createElement("div");
-        tile.classList.add("tile");
-        tile.innerHTML = `
-                    <p>${comment.commentDescription}</p>
-                    <p><strong>User ID:</strong> ${comment.userId}</p>
-                    <p><strong>Likes:</strong> <span class="like-count" data-comment-id="${
-                      comment.commentId
-                    }">${comment.TotalLikes || 0}</span></p>
-                    <button class="like-button" data-comment-id="${
-                      comment.commentId
-                    }">Like</button>
-                `;
-        commentTiles.appendChild(tile);
-      });
-    }
-
-    // event listeners for like buttons
-    const likeButtons = document.querySelectorAll(".like-button");
-    likeButtons.forEach((button) => {
-      button.addEventListener("click", async () => {
-        const commentId = button.dataset.commentId;
-        await likeComment(commentId);
-      });
-    });
-
-    //new comment submission
-    if (loggedInUser) {
-      const createCommentForm = document.getElementById("create-comment-form");
-      createCommentForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const description = document
-          .getElementById("comment-description")
-          .value.trim();
-        await createComment(postId, description);
-      });
-    }
-  } catch (error) {
-    console.error("Error loading post details:", error);
-  }
-}
-
-//when a user likes a comment, passes in commentId for the comment that was liked
+// Function to like a comment
 async function likeComment(commentId) {
   const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
 
@@ -455,9 +294,7 @@ async function likeComment(commentId) {
 
     if (result.success) {
       // Update the like count dynamically
-      const likeCountElement = document.querySelector(
-        `.like-count[data-comment-id="${commentId}"]`
-      );
+      const likeCountElement = document.querySelector(`.like-count[data-comment-id="${commentId}"]`);
       likeCountElement.textContent = parseInt(likeCountElement.textContent) + 1;
     } else {
       alert(`Failed to like comment: ${result.error || "Unknown error"}`);
@@ -468,7 +305,7 @@ async function likeComment(commentId) {
   }
 }
 
-//when a user creates a comment
+// Function to create a comment
 async function createComment(postId, description) {
   const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
 
@@ -478,9 +315,9 @@ async function createComment(postId, description) {
     return;
   }
 
-  console.log("Post ID:", postId); // debuggin log
-  console.log("User ID:", loggedInUser.userId); // debuggin log
-  console.log("Description:", description); // debuggin log
+  console.log("Post ID:", postId);
+  console.log("User ID:", loggedInUser.userId);
+  console.log("Description:", description);
 
   try {
     const response = await fetch("http://localhost:3000/api/create-comment", {
@@ -507,11 +344,11 @@ async function createComment(postId, description) {
   }
 }
 
-//event listeners for the post tiles
+// Function to attach event listeners for post tiles
 function addPostTileEventListeners() {
   const postTiles = document.querySelectorAll(".post-tile");
   postTiles.forEach((tile) => {
-    const postId = tile.dataset.postId; // Ensure this captures the correct postId
+    const postId = tile.dataset.postId;
     if (!postId) {
       console.error("Post ID is undefined for a tile.");
       return;

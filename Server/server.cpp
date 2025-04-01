@@ -27,22 +27,18 @@ void loadDotEnv(const std::string& path) {
     
     std::string line;
     while (std::getline(file, line)) {
-        // Trim whitespace at beginning and end
         size_t start = line.find_first_not_of(" \t");
-        if (start == std::string::npos) continue;
+        if (start == std::string::npos)
+            continue;
         size_t end = line.find_last_not_of(" \t");
         line = line.substr(start, end - start + 1);
-        
-        // Skip comments and empty lines
-        if (line.empty() || line[0] == '#') continue;
-        
-        // Split line at first '='
+        if (line.empty() || line[0] == '#')
+            continue;
         size_t delim_pos = line.find('=');
-        if (delim_pos == std::string::npos) continue;
+        if (delim_pos == std::string::npos)
+            continue;
         std::string key = line.substr(0, delim_pos);
         std::string value = line.substr(delim_pos + 1);
-        
-        // Remove surrounding quotes if present
         if (!value.empty() && value.front() == '"' && value.back() == '"') {
             value = value.substr(1, value.size() - 2);
         }
@@ -62,7 +58,6 @@ const std::string jwt_secret = jwt_secret_env ? jwt_secret_env : "fallback_jwt_s
 // -----------------------------------------------------------------------------
 struct CORSMiddleware {
     struct context {};
-
     void before_handle(crow::request& req, crow::response& res, context& ctx) {
         if (req.method == crow::HTTPMethod::OPTIONS) {
             res.add_header("Access-Control-Allow-Origin", "*");
@@ -71,7 +66,6 @@ struct CORSMiddleware {
             res.end();
         }
     }
-
     void after_handle(crow::request& req, crow::response& res, context& ctx) {
         res.add_header("Access-Control-Allow-Origin", "*");
         res.add_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -101,7 +95,6 @@ bool verify_jwt(const std::string& token, std::string& user_id, std::string& use
                         .allow_algorithm(jwt::algorithm::hs256{jwt_secret})
                         .with_issuer("EddieAikau");
         verifier.verify(decoded);
-
         user_id = decoded.get_subject();
         username = decoded.get_payload_claim("username").as_string();
         return true;
@@ -133,22 +126,17 @@ struct JWTMiddleware {
                 res.end();
                 return;
             }
-            // Optionally store user_id/username in context.
         }
     }
-    void after_handle(crow::request& req, crow::response& res, context& ctx) {
-        // No post-processing required.
-    }
+    void after_handle(crow::request& req, crow::response& res, context& ctx) { }
 };
 
 // -----------------------------------------------------------------------------
 // Main
 // -----------------------------------------------------------------------------
 int main() {
-    // Load environment variables from .env file
     loadDotEnv(".env");
 
-    // Re-read environment variables
     const char* mongo_uri_env = std::getenv("MONGO_URI");
     std::string mongo_uri = mongo_uri_env ? mongo_uri_env : "mongodb://localhost:27017";
 
@@ -163,22 +151,15 @@ int main() {
     std::cout << "Using Port: " << port << "\n";
     std::cout << "JWT Secret: " << (jwt_secret_env ? "Loaded from ENV" : "Fallback used!") << "\n";
 
-    // Initialize MongoDB driver instance and create client/DB reference
     mongocxx::instance instance{};
     mongocxx::client client{mongocxx::uri{mongo_uri}};
     auto db = client[db_name];
 
-    // Prepare "Accounts" collection for user accounts
     auto accounts_collection = db["Accounts"];
-
-    // Create a counting semaphore for search operations (limit 3 concurrent)
     std::counting_semaphore<3> search_semaphore(3);
-
-    // In-memory session store for account logins
     std::mutex session_mutex;
     std::unordered_map<std::string, int> active_sessions;
 
-    // Create Crow app with CORSMiddleware & JWTMiddleware
     crow::App<CORSMiddleware, JWTMiddleware> app;
 
     // -------------------------------------------------------------------------
@@ -254,7 +235,8 @@ int main() {
                 json_result = "[";
                 for (size_t i = 0; i < results.size(); ++i) {
                     json_result += bsoncxx::to_json(results[i]);
-                    if (i < results.size() - 1) json_result += ",";
+                    if (i < results.size() - 1)
+                        json_result += ",";
                 }
                 json_result += "]";
             }
@@ -287,14 +269,15 @@ int main() {
         }
         auto collection = db["SurfLocation"];
         try {
-            auto insert_result = collection.insert_one(bsoncxx::builder::stream::document{}
-                << "countryName" << body["countryName"].s()
-                << "locationName" << body["locationName"].s()
-                << "breakType" << body["breakType"].s()
-                << "surfScore" << std::stoi(body["surfScore"].s())
-                << "userId" << body["userId"].s()
-                << bsoncxx::builder::stream::finalize);
-            
+            auto insert_result = collection.insert_one(
+                bsoncxx::builder::stream::document{}
+                    << "countryName" << body["countryName"].s()
+                    << "locationName" << body["locationName"].s()
+                    << "breakType" << body["breakType"].s()
+                    << "surfScore" << std::stoi(body["surfScore"].s())
+                    << "userId" << body["userId"].s()
+                    << bsoncxx::builder::stream::finalize
+            );
             if (!insert_result) {
                 return crow::response(500, "Insertion failed");
             }
@@ -398,6 +381,181 @@ int main() {
         response_json["username"] = username;
         return crow::response(200, response_json);
     });
+
+    // ===================== New Endpoints for Comment Functionality =====================
+
+    // -------------------------------------------------------------------------
+    // Create Comment (POST /api/create-comment)
+    // -------------------------------------------------------------------------
+    CROW_ROUTE(app, "/api/create-comment").methods("POST"_method)
+    ([&db](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return crow::response(400, "Invalid JSON");
+        }
+        try {
+            auto comments_collection = db["Comments"];
+            auto insert_result = comments_collection.insert_one(
+                bsoncxx::builder::stream::document{}
+                    << "postId" << body["postId"].s()
+                    << "userId" << body["userId"].s()
+                    << "commentDescription" << body["description"].s()
+                    << "timestamp" << bsoncxx::types::b_date(std::chrono::system_clock::now())
+                    << "TotalLikes" << 0
+                    << bsoncxx::builder::stream::finalize
+            );
+            if (!insert_result) {
+                return crow::response(500, "{\"success\": false, \"message\": \"Failed to create comment\"}");
+            }
+            return crow::response(200, "{\"success\": true, \"message\": \"Comment created successfully\"}");
+        } catch (const std::exception& e) {
+            return crow::response(500, std::string("Error: ") + e.what());
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // Get Post Comments (GET /api/post-comments)
+    // -------------------------------------------------------------------------
+    CROW_ROUTE(app, "/api/post-comments").methods("GET"_method)
+    ([&db](const crow::request& req) {
+        auto postId = req.url_params.get("postId");
+        if (!postId) {
+            return crow::response(400, "Missing postId parameter");
+        }
+        auto comments_collection = db["Comments"];
+        bsoncxx::builder::stream::document query_builder;
+        query_builder << "postId" << postId;
+        auto cursor = comments_collection.find(query_builder.view());
+        
+        crow::json::wvalue result;
+        crow::json::wvalue::list comments_list;
+        for (auto&& doc : cursor) {
+            std::string doc_str = bsoncxx::to_json(doc);
+            auto rdoc = crow::json::load(doc_str);
+            if (!rdoc)
+                continue;
+            // Move the read-only JSON into a mutable wvalue
+            crow::json::wvalue doc_json = std::move(rdoc);
+            // If _id exists as an object, extract the "$oid" string value
+            if (doc_json["_id"].t() == crow::json::type::Object) {
+                std::string oid_dump = doc_json["_id"]["$oid"].dump();
+                // Remove surrounding quotes (dump() returns the string with quotes)
+                if (!oid_dump.empty() && oid_dump.front() == '"' && oid_dump.back() == '"') {
+                    oid_dump = oid_dump.substr(1, oid_dump.size() - 2);
+                }
+                doc_json["commentId"] = std::move(crow::json::wvalue(oid_dump));
+                // Optionally, you could remove the original _id field if desired.
+            }
+            comments_list.push_back(doc_json);
+        }
+        result["comments"] = std::move(comments_list);
+        return crow::response(200, result);
+    });
+
+
+    // -------------------------------------------------------------------------
+    // Like Comment (POST /api/like-comment)
+    // -------------------------------------------------------------------------
+    CROW_ROUTE(app, "/api/like-comment").methods("POST"_method)
+    ([&db](const crow::request& req) {
+        auto body = crow::json::load(req.body);
+        if (!body) {
+            return crow::response(400, "Invalid JSON");
+        }
+        try {
+            auto comments_collection = db["Comments"];
+            std::string commentIdStr = body["commentId"].s();
+            bsoncxx::oid commentId(commentIdStr);
+            auto update_result = comments_collection.update_one(
+                bsoncxx::builder::stream::document{} 
+                    << "_id" << commentId 
+                    << bsoncxx::builder::stream::finalize,
+                bsoncxx::builder::stream::document{} 
+                    << "$inc" << bsoncxx::builder::stream::open_document
+                    << "TotalLikes" << 1
+                    << bsoncxx::builder::stream::close_document 
+                    << bsoncxx::builder::stream::finalize
+            );
+            if (!update_result) {
+                return crow::response(500, "{\"success\": false, \"message\": \"Failed to update comment like count\"}");
+            }
+            return crow::response(200, "{\"success\": true, \"message\": \"Comment liked successfully\"}");
+        } catch (const std::exception& e) {
+            return crow::response(500, std::string("Error: ") + e.what());
+        }
+    });
+
+    // Location Details Endpoint (GET /api/location-details)
+    CROW_ROUTE(app, "/api/location-details").methods("GET"_method)
+    ([&db, &search_semaphore](const crow::request& req) {
+        try {
+            search_semaphore.acquire();
+            auto locationName = req.url_params.get("locationName");
+            if (!locationName) {
+                search_semaphore.release();
+                return crow::response(400, "{\"error\": \"locationName parameter is required\"}");
+            }
+            std::string location_str(locationName);
+
+            // 1. Fetch location from "SurfLocation"
+            auto surf_collection = db["SurfLocation"];
+            bsoncxx::builder::stream::document location_query;
+            location_query << "locationName" << location_str;
+            auto location_cursor = surf_collection.find(location_query.view());
+            std::vector<bsoncxx::document::value> location_results;
+            for (auto&& doc : location_cursor) {
+                location_results.push_back(bsoncxx::document::value(doc));
+            }
+
+            // If not found, return 404
+            if (location_results.empty()) {
+                search_semaphore.release();
+                return crow::response(404, "{\"error\": \"Location not found\"}");
+            }
+
+            // 2. Fetch posts from "Post"
+            auto post_collection = db["Post"];
+            bsoncxx::builder::stream::document post_query;
+            post_query << "locationName" << location_str;
+            auto post_cursor = post_collection.find(post_query.view());
+            std::vector<bsoncxx::document::value> post_results;
+
+            // (existing logic that enriches each post with likes/comments)
+            // ...
+            // push_back each enriched post to post_results
+
+            // 3. Combine location and posts
+            std::vector<bsoncxx::document::value> combined_results;
+            combined_results.insert(combined_results.end(), location_results.begin(), location_results.end());
+            combined_results.insert(combined_results.end(), post_results.begin(), post_results.end());
+
+            // 4. Build JSON array string
+            std::string json_result = "[";
+            for (size_t i = 0; i < combined_results.size(); ++i) {
+                json_result += bsoncxx::to_json(combined_results[i]);
+                if (i < combined_results.size() - 1) {
+                    json_result += ",";
+                }
+            }
+            json_result += "]";
+
+            search_semaphore.release();
+
+            // 5. Return response
+            auto res = crow::response(json_result);
+            res.code = 200;
+            res.add_header("Content-Type", "application/json");
+            // Do NOT add extra CORS headers here; CORSMiddleware handles that
+            return res;
+        } catch (const std::exception& e) {
+            search_semaphore.release();
+            std::string error_msg = "{\"error\": \"" + std::string(e.what()) + "\"}";
+            auto res = crow::response(500, error_msg);
+            res.add_header("Content-Type", "application/json");
+            return res;
+        }
+    });
+
 
     // -------------------------------------------------------------------------
     // Run the server

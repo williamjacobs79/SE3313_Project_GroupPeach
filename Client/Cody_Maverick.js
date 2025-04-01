@@ -1,3 +1,7 @@
+// Determine the base API URL based on the hostname
+const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+const baseUrl = process.env.API_URL || "http://localhost:3000";
+
 // Elements
 const signInButton = document.getElementById("sign-in");
 const modal = document.getElementById("auth-modal");
@@ -45,13 +49,14 @@ loginButton.addEventListener("click", async () => {
   const password = document.getElementById("password").value;
 
   try {
-    const response = await fetch("http://localhost:3000/api/login", {
+    const response = await fetch(`${baseUrl}/api/login`, {
       method: "POST",
       mode: 'cors',
       headers: { 
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Origin": "http://localhost:8000"  // This header is kept for login
+        // Optional: Adjust the Origin header as needed
+        "Origin": "http://localhost:8000"
       },
       credentials: 'omit',
       body: JSON.stringify({ username, password }),
@@ -82,13 +87,13 @@ createButton.addEventListener("click", async () => {
   const newEmail = document.getElementById("new-email").value;
 
   try {
-    const response = await fetch("http://localhost:3000/api/create-account", {
+    const response = await fetch(`${baseUrl}/api/create-account`, {
       method: "POST",
       mode: 'cors',
       headers: { 
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "Origin": "http://localhost:8000"  // This header is kept for create-account
+        "Origin": "http://localhost:8000"
       },
       credentials: 'omit',
       body: JSON.stringify({
@@ -146,7 +151,7 @@ async function fetchAndDisplayLocations(country = "", location = "", filterLikes
   try {
     console.log('Fetching locations with:', { country, location });
     const response = await fetch(
-      `http://localhost:3000/api/surf-locations?country=${country}&location=${location}&filterLikes=${filterLikes}`,
+      `${baseUrl}/api/surf-locations?country=${country}&location=${location}&filterLikes=${filterLikes}`,
       {
         method: 'GET',
         headers: { 'Accept': 'application/json' }
@@ -197,7 +202,7 @@ async function fetchAndDisplayLocations(country = "", location = "", filterLikes
 // Function to load location details and display posts and comment section
 async function loadLocationDetails(locationName) {
   try {
-    const response = await fetch(`http://localhost:3000/api/location-details?locationName=${locationName}`);
+    const response = await fetch(`${baseUrl}/api/location-details?locationName=${locationName}`);
     const data = await response.json();
 
     const mainContent = document.getElementById("main-content");
@@ -273,7 +278,7 @@ async function loadLocationDetails(locationName) {
           e.preventDefault();
           const description = document.getElementById("post-description").value.trim();
           try {
-            const response = await fetch("http://localhost:3000/api/create-post", {
+            const response = await fetch(`${baseUrl}/api/create-post`, {
               method: "POST",
               mode: 'cors',
               headers: { 
@@ -321,7 +326,7 @@ async function likeComment(commentId) {
   }
 
   try {
-    const response = await fetch("http://localhost:3000/api/like-comment", {
+    const response = await fetch(`${baseUrl}/api/like-comment`, {
       method: "POST",
       mode: 'cors',
       headers: { "Content-Type": "application/json" },
@@ -360,7 +365,7 @@ async function createComment(postId, description) {
   console.log("Description:", description);
 
   try {
-    const response = await fetch("http://localhost:3000/api/create-comment", {
+    const response = await fetch(`${baseUrl}/api/create-comment`, {
       method: "POST",
       mode: 'cors',
       headers: { "Content-Type": "application/json" },
@@ -402,7 +407,7 @@ function addPostTileEventListeners() {
 async function loadPostDetails(postId) {
   try {
     console.log("Loading post details for ID:", postId);
-    const response = await fetch(`http://localhost:3000/api/post-comments?postId=${postId}`);
+    const response = await fetch(`${baseUrl}/api/post-comments?postId=${postId}`);
     const result = await response.json();
     const comments = result.comments || [];
 

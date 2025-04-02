@@ -402,7 +402,7 @@ function addPostTileEventListeners() {
       console.error("Post ID is undefined for a tile.");
       return;
     }
-    tile.addEventListener("click", () => loadLocationDetails(postId));
+    tile.addEventListener("click", () => loadPostDetails(postId));
   });
 }
 

@@ -219,53 +219,62 @@ async function loadLocationDetails(locationName) {
       ` 
       : `<p>You must be logged in to create a post.</p>`;
 
-    if (data.length === 0) {
+    // Check if data is valid
+    if (!data || !Array.isArray(data)) {
       mainContent.innerHTML = `
         <h2>${locationName}</h2>
         ${createPostSection}
         <p>No data available for this location.</p>
       `;
-    } else {
-      // Get posts from data (filtering posts with valid _id)
-      const posts = data.filter((post) => post._id && (typeof post._id === "string" || post._id.$oid));
-      console.log("Posts:", posts);
+      return;
+    }
 
-      // Display location details with posts
+    if (data.length === 0) {
       mainContent.innerHTML = `
         <h2>${locationName}</h2>
         ${createPostSection}
-        <h3>Posts:</h3>
-        <div id="post-tiles" class="tiles-container"></div>
+        <p>No posts available for this location.</p>
       `;
-
-      // Display all posts
-      const postTiles = document.getElementById("post-tiles");
-      
-      if (posts.length === 0) {
-        postTiles.innerHTML = `<p>No posts yet. Be the first to post!</p>`;
-      } else {
-        posts.forEach((post) => {
-          const tile = document.createElement("div");
-          tile.classList.add("tile", "post-tile");
-          const postId = post._id?.$oid || post._id;
-          tile.dataset.postId = postId;
-          
-          tile.innerHTML = `
-            <p>${post.description || "No description provided"}</p>
-            <p><strong>Posted by:</strong> ${post.userId || "Unknown"}</p>
-            <p><strong>Likes:</strong> ${post.TotalLikes || 0}</p>
-            <p><strong>Comments:</strong> ${post.TotalComments || 0}</p>
-          `;
-          postTiles.appendChild(tile);
-        });
-
-        // Attach event listeners for post tiles to load post details
-        addPostTileEventListeners();
-      }
+      return;
     }
 
-    // Updated create post event listener for CORS issue:
-    // No custom "Origin" header is set here.
+    // Display location details with posts
+    mainContent.innerHTML = `
+      <h2>${locationName}</h2>
+      ${createPostSection}
+      <h3>Posts:</h3>
+      <div id="post-tiles" class="tiles-container"></div>
+    `;
+
+    // Display all posts
+    const postTiles = document.getElementById("post-tiles");
+    
+    // Filter posts with valid _id
+    const posts = data.filter(post => post && (post._id || (post._id && post._id.$oid)));
+    
+    if (posts.length === 0) {
+      postTiles.innerHTML = `<p>No posts yet. Be the first to post!</p>`;
+    } else {
+      posts.forEach((post) => {
+        const tile = document.createElement("div");
+        tile.classList.add("tile", "post-tile");
+        const postId = post._id?.$oid || post._id;
+        tile.dataset.postId = postId;
+        
+        tile.innerHTML = `
+          <p>${post.description || "No description provided"}</p>
+          <p><strong>Posted by:</strong> ${post.userId || "Unknown"}</p>
+          <p><strong>Likes:</strong> ${post.TotalLikes || 0}</p>
+          <p><strong>Comments:</strong> ${post.TotalComments || 0}</p>
+        `;
+        postTiles.appendChild(tile);
+      });
+
+      // Attach event listeners for post tiles to load post details
+      addPostTileEventListeners();
+    }
+
+    // Updated create post event listener
     if (loggedInUser) {
       const createPostForm = document.getElementById("create-post-form");
       if (createPostForm) {
@@ -275,7 +284,6 @@ async function loadLocationDetails(locationName) {
           try {
             const response = await fetch("http://localhost:3000/api/create-post", {
               method: "POST",
-              mode: 'cors',
               headers: { 
                 "Content-Type": "application/json",
                 "Accept": "application/json"

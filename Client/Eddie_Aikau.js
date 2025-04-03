@@ -10,11 +10,12 @@ const loginButton = document.getElementById("login-btn");
 const createButton = document.getElementById("create-btn");
 const userDisplay = document.getElementById("user-display");
 const signOutButton = document.getElementById("sign-out");
+const addLocationButton = document.getElementById("add-location-btn");
 
 // Load surf locations when the page first loads
-document.addEventListener('DOMContentLoaded', () => {
-    loadSurfLocations();
-    updateAuthUI();
+document.addEventListener("DOMContentLoaded", () => {
+  loadSurfLocations();
+  updateAuthUI();
 });
 
 // Show Modal
@@ -39,6 +40,21 @@ backToLoginButton.addEventListener("click", () => {
   loginForm.style.display = "block";
 });
 
+// Helper function to get auth headers for API requests
+function getAuthHeaders() {
+  const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (loggedInUser && loggedInUser.token) {
+    headers["Authorization"] = `Bearer ${loggedInUser.token}`;
+  }
+
+  return headers;
+}
+
 // Login event listener
 loginButton.addEventListener("click", async () => {
   const username = document.getElementById("username").value;
@@ -47,25 +63,31 @@ loginButton.addEventListener("click", async () => {
   try {
     const response = await fetch("http://localhost:3000/api/login", {
       method: "POST",
-      mode: 'cors',
-      headers: { 
+      mode: "cors",
+      headers: {
         "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Origin": "http://localhost:8000"  // This header is kept for login
+        Accept: "application/json",
+        Origin: "http://localhost:8000", // This header is kept for login
       },
-      credentials: 'omit',
+      credentials: "omit",
       body: JSON.stringify({ username, password }),
     });
 
     const result = await response.json();
 
     if (result.success) {
-      localStorage.setItem("loggedInUser", JSON.stringify({ 
-        userId: result.userId, 
-        username: result.username 
-      }));
+      localStorage.setItem(
+        "loggedInUser",
+        JSON.stringify({
+          userId: result.userId,
+          username: result.username,
+          token: result.token, // Store the JWT token
+        })
+      );
       updateAuthUI();
       modal.style.display = "none";
+      // Refresh the surf locations view to show the Add Location button
+      loadSurfLocations();
     } else {
       alert(result.message || "Login failed. Please try again.");
     }
@@ -81,16 +103,25 @@ createButton.addEventListener("click", async () => {
   const newPassword = document.getElementById("new-password").value;
   const newEmail = document.getElementById("new-email").value;
 
+  // Email validation regex pattern
+  const emailPattern = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+  // Validate email
+  if (!emailPattern.test(newEmail)) {
+    alert("Please enter a valid email address.");
+    return;
+  }
+
   try {
     const response = await fetch("http://localhost:3000/api/create-account", {
       method: "POST",
-      mode: 'cors',
-      headers: { 
+      mode: "cors",
+      headers: {
         "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Origin": "http://localhost:8000"  // This header is kept for create-account
+        Accept: "application/json",
+        Origin: "http://localhost:8000", // This header is kept for create-account
       },
-      credentials: 'omit',
+      credentials: "omit",
       body: JSON.stringify({
         username: newUsername,
         password: newPassword,
@@ -118,14 +149,29 @@ document.getElementById("surf-locations-btn").addEventListener("click", () => {
   loadSurfLocations();
 });
 
+// NEW: Event listener for "Add Location" button in the header
+if (addLocationButton) {
+  addLocationButton.addEventListener("click", () => {
+    showAddLocationForm();
+  });
+}
+
 // Function to load surf locations and display them
 async function loadSurfLocations() {
   const mainContent = document.getElementById("main-content");
+
+  // Check if user is logged in to show add location button
+  const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+  const addLocationButton = loggedInUser
+    ? `<button id="add-location-btn" class="button">Add New Location</button>`
+    : "";
+
   mainContent.innerHTML = `
     <div class="search-bar">
       <input type="text" id="search-country" placeholder="Search by Country">
       <input type="text" id="search-location" placeholder="Search by Location">
       <button id="search-btn">Search</button>
+      ${addLocationButton}
     </div>
     <div id="surf-locations" class="tiles-container"></div>
   `;
@@ -139,26 +185,144 @@ async function loadSurfLocations() {
     const location = document.getElementById("search-location").value.trim();
     await fetchAndDisplayLocations(country, location);
   });
+
+  // Add event listener for the add location button if it exists
+  const addLocBtn = document.getElementById("add-location-btn");
+  if (addLocBtn) {
+    addLocBtn.addEventListener("click", () => {
+      showAddLocationForm();
+    });
+  }
+}
+
+// NEW: Function to show the add location form
+function showAddLocationForm() {
+  const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+
+  if (!loggedInUser) {
+    alert("You must be logged in to add a surf location.");
+    return;
+  }
+
+  const mainContent = document.getElementById("main-content");
+  mainContent.innerHTML = `
+    <div class="form-container">
+      <h2>Add New Surf Location</h2>
+      <form id="add-location-form">
+        <div class="form-group">
+          <label for="location-name">Location Name:</label>
+          <input type="text" id="location-name" required>
+        </div>
+        <div class="form-group">
+          <label for="country-name">Country:</label>
+          <input type="text" id="country-name" required>
+        </div>
+        <div class="form-group">
+          <label for="break-type">Break Type:</label>
+          <select id="break-type" required>
+            <option value="">Select Break Type</option>
+            <option value="Beach Break">Beach Break</option>
+            <option value="Point Break">Point Break</option>
+            <option value="Reef Break">Reef Break</option>
+            <option value="River Mouth">River Mouth</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="surf-score">Surf Score (1-10):</label>
+          <input type="number" id="surf-score" min="1" max="10" required>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="button primary">Add Location</button>
+          <button type="button" id="cancel-add-location" class="button secondary">Cancel</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  // Add event listener for form submission
+  document
+    .getElementById("add-location-form")
+    .addEventListener("submit", handleAddLocationSubmit);
+
+  // Add event listener for cancel button
+  document
+    .getElementById("cancel-add-location")
+    .addEventListener("click", () => {
+      loadSurfLocations(); // Go back to surf locations view
+    });
+}
+
+// NEW: Function to handle the add location form submission
+async function handleAddLocationSubmit(event) {
+  event.preventDefault();
+
+  const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+  if (!loggedInUser) {
+    alert("You must be logged in to add a surf location.");
+    return;
+  }
+
+  const locationName = document.getElementById("location-name").value.trim();
+  const countryName = document.getElementById("country-name").value.trim();
+  const breakType = document.getElementById("break-type").value;
+  const surfScore = document.getElementById("surf-score").value;
+
+  if (!locationName || !countryName || !breakType || !surfScore) {
+    alert("All fields are required.");
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      "http://localhost:3000/api/protected/insert-surf-location",
+      {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          locationName,
+          countryName,
+          breakType,
+          surfScore: surfScore.toString(), // API expects string
+          username: loggedInUser.username,
+        }),
+      }
+    );
+
+    if (response.ok) {
+      alert("Surf location added successfully!");
+      loadSurfLocations(); // Return to the surf locations view
+    } else {
+      const errorText = await response.text();
+      alert(`Failed to add location: ${errorText}`);
+    }
+  } catch (error) {
+    console.error("Error adding surf location:", error);
+    alert("An error occurred while adding the surf location.");
+  }
 }
 
 // Function to fetch and display surf locations
-async function fetchAndDisplayLocations(country = "", location = "", filterLikes = false) {
+async function fetchAndDisplayLocations(
+  country = "",
+  location = "",
+  filterLikes = false
+) {
   try {
-    console.log('Fetching locations with:', { country, location });
+    console.log("Fetching locations with:", { country, location });
     const response = await fetch(
       `http://localhost:3000/api/surf-locations?country=${country}&location=${location}&filterLikes=${filterLikes}`,
       {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' }
+        method: "GET",
+        headers: { Accept: "application/json" },
       }
     );
 
     const locations = await response.json();
-    console.log('Received locations:', locations);
+    console.log("Received locations:", locations);
 
     const tilesContainer = document.getElementById("surf-locations");
     if (!tilesContainer) {
-      console.error('Could not find surf-locations container');
+      console.error("Could not find surf-locations container");
       return;
     }
 
@@ -173,16 +337,21 @@ async function fetchAndDisplayLocations(country = "", location = "", filterLikes
     locations.forEach((loc) => {
       const tile = document.createElement("div");
       tile.classList.add("tile");
+
+      // Display the post count, defaulting to 0 if not available
+      const postCount = loc.postCount !== undefined ? loc.postCount : 0;
+
       tile.innerHTML = `
-        <h3>${loc.locationName || 'Unnamed Location'}</h3>
-        <p>Break Type: ${loc.breakType || 'Not specified'}</p>
-        <p>Surf Score: ${loc.surfScore || 'Not rated'}</p>
-        <p>Country: ${loc.countryName || 'Not specified'}</p>
-        <p>Added by User ID: ${loc.userId || 'Unknown'}</p>
-        <p>Likes: ${loc.TotalLikes || 0}</p>
-        <p>Comments: ${loc.TotalComments || 0}</p>
+        <h3>${loc.locationName || "Unnamed Location"}</h3>
+        <p>Country: ${loc.countryName || "Not specified"}</p>
+        <p>Break Type: ${loc.breakType || "Not specified"}</p>
+        <p>Surf Score: ${loc.surfScore || "Not rated"}</p>
+        <p>Added by User: ${loc.userId || "Unknown"}</p>
+        <p>Posts: <span class="post-count">${postCount}</span></p>
       `;
-      tile.addEventListener("click", () => loadLocationDetails(loc.locationName));
+      tile.addEventListener("click", () =>
+        loadLocationDetails(loc.locationName)
+      );
       tilesContainer.appendChild(tile);
     });
   } catch (error) {
@@ -197,7 +366,9 @@ async function fetchAndDisplayLocations(country = "", location = "", filterLikes
 // Function to load location details and display posts and comment section
 async function loadLocationDetails(locationName) {
   try {
-    const response = await fetch(`http://localhost:3000/api/location-details?locationName=${locationName}`);
+    const response = await fetch(
+      `http://localhost:3000/api/location-details?locationName=${locationName}`
+    );
     const data = await response.json();
 
     const mainContent = document.getElementById("main-content");
@@ -207,7 +378,7 @@ async function loadLocationDetails(locationName) {
     const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
 
     // Updated Create Post Section with nicer UI
-    const createPostSection = loggedInUser 
+    const createPostSection = loggedInUser
       ? `
         <div class="create-post-section">
           <h3>Create a Post</h3>
@@ -216,42 +387,79 @@ async function loadLocationDetails(locationName) {
             <button type="submit" id="create-post-button">Post It!</button>
           </form>
         </div>
-      ` 
+      `
       : `<p>You must be logged in to create a post.</p>`;
 
     // Check if data is valid
     if (!data || !Array.isArray(data)) {
       mainContent.innerHTML = `
         <h2>${locationName}</h2>
+        <button id="back-to-locations" class="button">Back to Locations</button>
         ${createPostSection}
         <p>No data available for this location.</p>
       `;
+      document
+        .getElementById("back-to-locations")
+        .addEventListener("click", loadSurfLocations);
       return;
     }
 
-    if (data.length === 0) {
-      mainContent.innerHTML = `
-        <h2>${locationName}</h2>
-        ${createPostSection}
-        <p>No posts available for this location.</p>
-      `;
-      return;
-    }
+    // Filter out the location data from posts data
+    const locationData = data.filter((item) =>
+      item.hasOwnProperty("breakType")
+    );
+    const postsData = data.filter((item) => item.hasOwnProperty("description"));
+
+    // Get the location information (should be the first item)
+    const locationInfo = locationData.length > 0 ? locationData[0] : null;
+
+    // Get the post count value, defaulting to 0 if not available
+    const postCount =
+      locationInfo && locationInfo.postCount !== undefined
+        ? locationInfo.postCount
+        : postsData.length || 0;
 
     // Display location details with posts
     mainContent.innerHTML = `
       <h2>${locationName}</h2>
+      <div class="location-info">
+        ${
+          locationInfo
+            ? `
+          <p><strong>Country:</strong> ${
+            locationInfo.countryName || "Not specified"
+          }</p>
+          <p><strong>Break Type:</strong> ${
+            locationInfo.breakType || "Not specified"
+          }</p>
+          <p><strong>Surf Score:</strong> ${
+            locationInfo.surfScore || "Not rated"
+          }</p>
+          <p><strong>Added by:</strong> ${locationInfo.userId || "Unknown"}</p>
+          <p><strong>Post Count:</strong> <span id="location-post-count">${postCount}</span></p>
+        `
+            : ""
+        }
+      </div>
+      <button id="back-to-locations" class="button">Back to Locations</button>
       ${createPostSection}
-      <h3>Posts:</h3>
+      <h3>Posts (${postsData.length}):</h3>
       <div id="post-tiles" class="tiles-container"></div>
     `;
 
+    // Add back button event listener
+    document
+      .getElementById("back-to-locations")
+      .addEventListener("click", loadSurfLocations);
+
     // Display all posts
     const postTiles = document.getElementById("post-tiles");
-    
-    // Filter posts with valid _id
-    const posts = data.filter(post => post && (post._id || (post._id && post._id.$oid)));
-    
+
+    // Filter posts with valid _id and only use actual post data
+    const posts = postsData.filter(
+      (post) => post && (post._id || (post._id && post._id.$oid))
+    );
+
     if (posts.length === 0) {
       postTiles.innerHTML = `<p>No posts yet. Be the first to post!</p>`;
     } else {
@@ -260,11 +468,10 @@ async function loadLocationDetails(locationName) {
         tile.classList.add("tile", "post-tile");
         const postId = post._id?.$oid || post._id;
         tile.dataset.postId = postId;
-        
+
         tile.innerHTML = `
           <p>${post.description || "No description provided"}</p>
           <p><strong>Posted by:</strong> ${post.userId || "Unknown"}</p>
-          <p><strong>Likes:</strong> ${post.TotalLikes || 0}</p>
           <p><strong>Comments:</strong> ${post.TotalComments || 0}</p>
         `;
         postTiles.appendChild(tile);
@@ -280,27 +487,42 @@ async function loadLocationDetails(locationName) {
       if (createPostForm) {
         createPostForm.addEventListener("submit", async (e) => {
           e.preventDefault();
-          const description = document.getElementById("post-description").value.trim();
+          const description = document
+            .getElementById("post-description")
+            .value.trim();
           try {
-            const response = await fetch("http://localhost:3000/api/create-post", {
-              method: "POST",
-              headers: { 
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-              },
-              body: JSON.stringify({
-                userId: loggedInUser.userId,
-                locationName: locationName,
-                description: description
-              }),
-            });
+            const response = await fetch(
+              "http://localhost:3000/api/protected/create-post",
+              {
+                method: "POST",
+                headers: getAuthHeaders(),
+                body: JSON.stringify({
+                  username: loggedInUser.username,
+                  locationName: locationName,
+                  description: description,
+                }),
+              }
+            );
             const result = await response.json();
             if (result.success) {
               alert("Post created successfully!");
+
+              // Increment the post count display immediately
+              const postCountElement = document.getElementById(
+                "location-post-count"
+              );
+              if (postCountElement) {
+                const currentCount =
+                  parseInt(postCountElement.textContent) || 0;
+                postCountElement.textContent = currentCount + 1;
+              }
+
               // Reload the location details to show the new post
               loadLocationDetails(locationName);
             } else {
-              alert(`Failed to create post: ${result.message || "Unknown error"}`);
+              alert(
+                `Failed to create post: ${result.message || "Unknown error"}`
+              );
             }
           } catch (error) {
             console.error("Error creating post:", error);
@@ -314,8 +536,12 @@ async function loadLocationDetails(locationName) {
     const mainContent = document.getElementById("main-content");
     mainContent.innerHTML = `
       <h2>${locationName}</h2>
+      <button id="back-to-locations" class="button">Back to Locations</button>
       <p>Error loading location details. Please try again.</p>
     `;
+    document
+      .getElementById("back-to-locations")
+      .addEventListener("click", loadSurfLocations);
   }
 }
 
@@ -329,20 +555,25 @@ async function likeComment(commentId) {
   }
 
   try {
-    const response = await fetch("http://localhost:3000/api/like-comment", {
-      method: "POST",
-      mode: 'cors',
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: loggedInUser.userId, commentId }),
-    });
+    const response = await fetch(
+      "http://localhost:3000/api/protected/like-comment",
+      {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ userId: loggedInUser.userId, commentId }),
+      }
+    );
 
     const result = await response.json();
 
     if (result.success) {
       // Update the like count dynamically
-      const likeCountElement = document.querySelector(`.like-count[data-comment-id="${commentId}"]`);
+      const likeCountElement = document.querySelector(
+        `.like-count[data-comment-id="${commentId}"]`
+      );
       if (likeCountElement) {
-        likeCountElement.textContent = parseInt(likeCountElement.textContent) + 1;
+        likeCountElement.textContent =
+          parseInt(likeCountElement.textContent) + 1;
       }
     } else {
       alert(`Failed to like comment: ${result.message || "Unknown error"}`);
@@ -368,16 +599,18 @@ async function createComment(postId, description) {
   console.log("Description:", description);
 
   try {
-    const response = await fetch("http://localhost:3000/api/create-comment", {
-      method: "POST",
-      mode: 'cors',
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        postId,
-        userId: loggedInUser.userId,
-        description,
-      }),
-    });
+    const response = await fetch(
+      "http://localhost:3000/api/protected/create-comment",
+      {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          postId,
+          userId: loggedInUser.username,
+          description,
+        }),
+      }
+    );
 
     const result = await response.json();
 
@@ -410,7 +643,9 @@ function addPostTileEventListeners() {
 async function loadPostDetails(postId) {
   try {
     console.log("Loading post details for ID:", postId);
-    const response = await fetch(`http://localhost:3000/api/post-comments?postId=${postId}`);
+    const response = await fetch(
+      `http://localhost:3000/api/post-comments?postId=${postId}`
+    );
     const result = await response.json();
     const comments = result.comments || [];
 
@@ -440,9 +675,11 @@ async function loadPostDetails(postId) {
     `;
 
     // Add back button functionality
-    document.getElementById("back-to-location").addEventListener("click", () => {
-      loadSurfLocations();
-    });
+    document
+      .getElementById("back-to-location")
+      .addEventListener("click", () => {
+        loadSurfLocations();
+      });
 
     const commentTiles = document.getElementById("comment-tiles");
 
@@ -454,9 +691,13 @@ async function loadPostDetails(postId) {
         tile.classList.add("tile");
         tile.innerHTML = `
           <p>${comment.commentDescription}</p>
-          <p><strong>User ID:</strong> ${comment.userId}</p>
-          <p><strong>Likes:</strong> <span class="like-count" data-comment-id="${comment.commentId}">${comment.TotalLikes || 0}</span></p>
-          <button class="like-button" data-comment-id="${comment.commentId}">Like</button>
+          <p><strong>User:</strong> ${comment.userId}</p>
+          <p><strong>Likes:</strong> <span class="like-count" data-comment-id="${
+            comment.commentId
+          }">${comment.TotalLikes || 0}</span></p>
+          <button class="like-button" data-comment-id="${
+            comment.commentId
+          }">Like</button>
         `;
         commentTiles.appendChild(tile);
       });
@@ -476,7 +717,9 @@ async function loadPostDetails(postId) {
       if (createCommentForm) {
         createCommentForm.addEventListener("submit", async (e) => {
           e.preventDefault();
-          const description = document.getElementById("comment-description").value.trim();
+          const description = document
+            .getElementById("comment-description")
+            .value.trim();
           await createComment(postId, description);
         });
       }
@@ -497,16 +740,72 @@ function updateAuthUI() {
     userDisplay.innerText = `Welcome, ${loggedInUser.username}`;
     signInButton.style.display = "none";
     signOutButton.style.display = "inline-block";
+
+    // Check if we're on the surf locations page and add the button if it doesn't exist
+    const mainContent = document.getElementById("main-content");
+    if (
+      mainContent &&
+      mainContent.querySelector(".search-bar") &&
+      !document.getElementById("add-location-btn")
+    ) {
+      const searchBar = mainContent.querySelector(".search-bar");
+      const addLocationBtn = document.createElement("button");
+      addLocationBtn.id = "add-location-btn";
+      addLocationBtn.className = "button";
+      addLocationBtn.textContent = "Add New Location";
+      addLocationBtn.addEventListener("click", showAddLocationForm);
+      searchBar.appendChild(addLocationBtn);
+    }
   } else {
     userDisplay.innerText = "";
     signInButton.style.display = "inline-block";
     signOutButton.style.display = "none";
+
+    // Remove the add location button if it exists
+    const addLocationBtn = document.getElementById("add-location-btn");
+    if (addLocationBtn) {
+      addLocationBtn.remove();
+    }
   }
 }
 
-signOutButton.addEventListener("click", () => {
-  localStorage.removeItem("loggedInUser");
-  updateAuthUI();
-  alert("Signed out!");
-  loadSurfLocations();
+signOutButton.addEventListener("click", async () => {
+  try {
+    // Get the current user from localStorage
+    const loggedInUser = JSON.parse(localStorage.getItem("loggedInUser"));
+
+    if (loggedInUser && loggedInUser.username) {
+      // Make API call to backend to decrement the session counter
+      const response = await fetch("http://localhost:3000/api/logout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${loggedInUser.token}`,
+        },
+        body: JSON.stringify({
+          username: loggedInUser.username,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error("Logout on server failed:", await response.text());
+        // Still proceed with local logout even if server logout fails
+      } else {
+        console.log("Server logout successful");
+      }
+    }
+
+    // Remove from localStorage (local logout)
+    localStorage.removeItem("loggedInUser");
+    updateAuthUI();
+    alert("Signed out successfully!");
+    loadSurfLocations();
+  } catch (error) {
+    console.error("Error during sign out:", error);
+    // Still proceed with local logout if an error occurs
+    localStorage.removeItem("loggedInUser");
+    updateAuthUI();
+    alert("Signed out, but there may have been an issue with the server.");
+    loadSurfLocations();
+  }
 });

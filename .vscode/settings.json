@@ -50,6 +50,11 @@
         "unordered_map": "cpp",
         "variant": "cpp",
         "vector": "cpp",
-        "algorithm": "cpp"
+        "algorithm": "cpp",
+        "charconv": "cpp",
+        "condition_variable": "cpp",
+        "fstream": "cpp",
+        "future": "cpp",
+        "map": "cpp"
     }
 }
